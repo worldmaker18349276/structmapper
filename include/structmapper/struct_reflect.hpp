@@ -108,8 +108,11 @@ public:                                                                        \
         static const auto fields_ = std::tuple_cat(                            \
             std::tuple<>{}
 
-#define FIELD(NAME, DESC)                                                      \
-            , std::make_tuple(::structmapper::make_field<ReflectSelf>(#NAME, &ReflectSelf::NAME, DESC))
+#define FIELD(VAR, DESC)                                                       \
+            , std::make_tuple(::structmapper::make_field<ReflectSelf>(#VAR, &ReflectSelf::VAR, DESC))
+
+#define FIELD_(VAR, NAME, DESC)                                                \
+            , std::make_tuple(::structmapper::make_field<ReflectSelf>(NAME, &ReflectSelf::VAR, DESC))
 
 #define END_STRUCT()                                                           \
         );                                                                     \
