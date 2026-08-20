@@ -91,14 +91,11 @@ namespace structmapper {
             j["description"] = T::reflect_struct_desc();
 
             nlohmann::json props = nlohmann::json::object();
-            nlohmann::json required = nlohmann::json::array();
             T default_obj{}; // value-initialized: gives every field a concrete default
             visit_struct(default_obj, [&](const char* name, const auto& value, const char* desc) {
                 props[name] = field_schema(value, desc);
-                required.push_back(name);
             });
             j["properties"] = std::move(props);
-            j["required"] = std::move(required);
             return j;
         }
         static constexpr bool is_scalar = false;
