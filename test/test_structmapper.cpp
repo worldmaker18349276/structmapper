@@ -45,13 +45,22 @@ struct Camera {
     END_STRUCT()
 };
 
+// // .../test_structmapper.cpp:53:9:   required from here
+// // .../struct_reflect.hpp:123:47: error: static assertion failed: ...
 // struct Sensors {
 //     std::unordered_map<std::string, Camera> cameras = {};
-
 //     BEGIN_STRUCT("sensor parameters")
 //         FIELD(cameras, "set of cameras")
 //     END_STRUCT()
 // };
+
+struct SelfRec {
+    std::map<std::string, SelfRec> rec = {};
+
+    BEGIN_STRUCT("test self-recursive type")
+        FIELD(rec, "map to self")
+    END_STRUCT()
+};
 
 // =======================================================================
 // structmapper::to_json / from_json

@@ -41,13 +41,14 @@ namespace structmapper {
     // -----------------------------------------------------------------
 
     // Detects whether T was declared with BEGIN_STRUCT/END_STRUCT (i.e. has
-    // a reflect_fields() method). Uses declval, so T need not be constructible.
+    // a structmapper_reflectable_tag type). Uses declval, so T need not be
+    // constructible.
     template <typename T>
     class is_reflectable {
-        template <typename U> static auto test(int) -> decltype(std::declval<U&>().reflect_fields(), std::true_type{});
+        template <typename U> static std::true_type  test(typename U::structmapper_reflectable_tag*);
         template <typename U> static std::false_type test(...);
     public:
-        static constexpr bool value = decltype(test<T>(0))::value;
+        static constexpr bool value = decltype(test<T>(nullptr))::value;
     };
 
     namespace detail {
@@ -174,6 +175,7 @@ namespace structmapper {
 
 #define BEGIN_STRUCT(DESC)                                                     \
 public:                                                                        \
+    using structmapper_reflectable_tag = void;                                 \
     static const char* reflect_struct_desc() { return DESC; }                  \
     auto reflect_fields() const {                                              \
         using ReflectSelf = std::remove_const<std::remove_pointer<decltype(this)>::type>::type; \
