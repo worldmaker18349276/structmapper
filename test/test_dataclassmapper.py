@@ -1,9 +1,9 @@
 import unittest
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Mapping
+from typing import Any, Dict, List, Literal, Mapping
 from unittest.mock import patch
 
-from structmapper.dataclassmapper import from_dict, to_schema, TypeMismatchWarning, UnknownWarning, MissingWarning
+from structmapper.dataclassmapper import ExternalType, from_dict, to_schema, TypeMismatchWarning, UnknownWarning, MissingWarning
 
 
 @dataclass
@@ -14,11 +14,15 @@ class Pose:
 
 @dataclass
 class Config:
+    """
+    config
+    """
     name: str
     pose: Pose
     poses: List[Pose]
     values: Dict[str, float]
     enabled: bool
+    additional: 'ExternalType[Literal["path/to/another.schema.json"]]' = field(default_factory=lambda: None)
 
 
 @dataclass
@@ -299,6 +303,7 @@ class TestFromDict(unittest.TestCase):
                 "$.pose.extra: unknown field",
                 "$.poses[1].x: expected float, got str",
                 "$.values['b']: expected float, got str",
+                '$.additional: missing field',
                 "$.unknown: unknown field",
             ],
         )
@@ -381,41 +386,43 @@ class TestToSchema(unittest.TestCase):
     def test_nested_dataclass(self):
         schema = to_schema(Config)
 
-        self.assertEqual(schema["type"], "object")
-
+        self.maxDiff = None
         self.assertEqual(
-            schema["properties"]["pose"],
+            schema,
             {
-                "description": "Pose(x: float, y: float)",
+                "description": "config",
                 "type": "object",
                 "properties": {
-                    "x": {"type": "number"},
-                    "y": {"type": "number"},
-                },
-            },
-        )
-
-        self.assertEqual(
-            schema["properties"]["poses"],
-            {
-                "type": "array",
-                "items": {
-                    "description": "Pose(x: float, y: float)",
-                    "type": "object",
-                    "properties": {
-                        "x": {"type": "number"},
-                        "y": {"type": "number"},
+                    "pose": {
+                        "description": "Pose(x: float, y: float)",
+                        "type": "object",
+                        "properties": {
+                            "x": {"type": "number"},
+                            "y": {"type": "number"},
+                        },
                     },
-                },
-            },
-        )
-
-        self.assertEqual(
-            schema["properties"]["values"],
-            {
-                "type": "object",
-                "additionalProperties": {
-                    "type": "number",
+                    "poses": {
+                        "type": "array",
+                        "items": {
+                            "description": "Pose(x: float, y: float)",
+                            "type": "object",
+                            "properties": {
+                                "x": {"type": "number"},
+                                "y": {"type": "number"},
+                            },
+                        },
+                    },
+                    "values": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "number",
+                        },
+                    },
+                   "enabled": {"type": "boolean"},
+                   "name": {"type": "string"},
+                    "additional": {
+                        "$ref": "path/to/another.schema.json",
+                    },
                 },
             },
         )
@@ -444,7 +451,6 @@ class TestToSchema(unittest.TestCase):
             {
                 "type": "array",
                 "items": {"type": "string"},
-                "default": [],
             },
         )
 

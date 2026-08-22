@@ -3,12 +3,18 @@ from typing import (
     Any,
     Dict,
     List,
+    Generic,
+    Literal,
+    Optional,
+    Type,
+    TypeVar,
     Union,
     get_args,
     get_origin,
     get_type_hints,
 )
 from collections.abc import Mapping
+import sys
 from inspect import cleandoc
 import warnings
 
@@ -44,6 +50,40 @@ class ClassMismatchWarning(Warning):
     def __str__(self):
         return f"{self.path}: expected {self.expected.__name__}, got {self.got.__name__}"
 
+# usage:
+# value_with_external_type: 'ExternalType[Literal["path/to/external.schema.json"]]' = ...
+# you must quote it, even if forward reference is enabled
+ExternalType = Any
+
+L = TypeVar("L")
+
+class _ExternalType(Generic[L]):
+    ...
+
+class _ExternalTypeProxy:
+    def __class_getitem__(cls, item: Any):
+        # ExternalType[Literal["foo.json"]]
+        literal = get_args(item)
+        if len(literal) != 1 or not isinstance(literal[0], str):
+            raise TypeError("ExternalType[...] requires Literal[str]")
+        return _ExternalType[Literal[literal[0]]]
+
+def _get_type_hints(
+    cls: Type[Any],
+    *,
+    globalns: Optional[Dict[str, Any]] = None,
+    localns: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    module = sys.modules.get(cls.__module__)
+    globalns = dict(vars(module)) if module is not None else {}
+    globalns["ExternalType"] = _ExternalTypeProxy
+
+    return get_type_hints(
+        cls,
+        globalns=globalns,
+        localns=localns,
+    )
+
 def from_dict(cls: Union[type, Any], data: Any, *, path: str = "$"):
     if cls is Any:
         return data
@@ -53,7 +93,7 @@ def from_dict(cls: Union[type, Any], data: Any, *, path: str = "$"):
             warnings.warn(TypeMismatchWarning(path, f"dict for {cls.__name__}", type(data).__name__))
             return cls()
 
-        type_hints = get_type_hints(cls)
+        type_hints = _get_type_hints(cls)
 
         field_map = {f.name: f for f in fields(cls)}
 
@@ -77,6 +117,9 @@ def from_dict(cls: Union[type, Any], data: Any, *, path: str = "$"):
 
     origin = get_origin(cls)
     args = get_args(cls)
+
+    if origin is _ExternalType:
+        return data
 
     # List[T]
     if origin in (list, List):
@@ -124,7 +167,7 @@ def type_check(cls: Union[type, Any], data: Any, *, path: str = "$") -> bool:
             warnings.warn(ClassMismatchWarning(path, cls, data_class))
             return False
 
-        type_hints = get_type_hints(cls)
+        type_hints = _get_type_hints(cls)
         field_map = {f.name: f for f in fields(cls)}
         ok = True
 
@@ -137,6 +180,10 @@ def type_check(cls: Union[type, Any], data: Any, *, path: str = "$") -> bool:
 
     origin = get_origin(cls)
     args = get_args(cls)
+
+    if origin is _ExternalType:
+        # TODO: type check
+        return True
 
     if origin in (list, List):
         if not isinstance(data, list):
@@ -178,7 +225,7 @@ def to_schema(cls: Union[type, Any]) -> Dict[str, Any]:
         return schema
 
     if isinstance(cls, type) and is_dataclass(cls):
-        hints = get_type_hints(cls)
+        hints = _get_type_hints(cls)
         properties = {}
         for f in fields(cls):
             field_schema = to_schema(hints.get(f.name, f.type))
@@ -192,6 +239,10 @@ def to_schema(cls: Union[type, Any]) -> Dict[str, Any]:
             **desc,
         }
         return schema
+
+    if origin is _ExternalType:
+        path = get_args(get_args(cls)[0])[0]
+        return {"$ref": path}
 
     if origin in (list, List):
         args = get_args(cls)
