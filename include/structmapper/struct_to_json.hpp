@@ -44,16 +44,8 @@ namespace structmapper {
     // ---------------------------------------------------------------------
     // Logging
     // ---------------------------------------------------------------------
-    enum class LogLevel { Info, Warning };
-
+    using LogLevel = int; // INFO = 0, WARNING = 1
     using Logger = std::function<void(LogLevel, const std::string&)>;
-
-    inline Logger default_logger() {
-        return [](LogLevel level, const std::string& msg) {
-            if (level == LogLevel::Warning) std::cerr << "[structmapper] WARNING: " << msg << "\n";
-            else                            std::cout << "[structmapper] " << msg << "\n";
-        };
-    }
 
     struct FromJsonStats {
         int loaded = 0;
@@ -73,57 +65,61 @@ namespace structmapper {
     // Writing: T -> json (always succeeds, nothing to log)
     // ---------------------------------------------------------------------
     namespace detail {
-        
-        inline void to_json(bool v, json& j) { j = v; }
-        inline void to_json(const std::string& v, json& j) { j = v; }
 
-        template <typename T>
-        typename std::enable_if<std::is_arithmetic<T>::value && !std::is_same<T, bool>::value>::type
-        to_json(const T& v, json& j);
-
-        template <typename T>
-        void to_json(const std::vector<T>& v, json& j);
-
-        template <typename V>
-        void to_json(const std::map<std::string, V>& m, json& j);
-
-        template <typename T>
-        typename std::enable_if<is_reflectable<T>::value>::type
-        to_json(const T& obj, json& j);
-
-        template <typename T>
-        typename std::enable_if<std::is_arithmetic<T>::value && !std::is_same<T, bool>::value>::type
-        to_json(const T& v, json& j) { j = v; }
-
-        template <typename T>
-        void to_json(const std::vector<T>& v, json& j) {
-            j = json::array();
-            for (const auto& e : v) { json ej; to_json(e, ej); j.push_back(std::move(ej)); }
-        }
-
-        template <typename V>
-        void to_json(const std::map<std::string, V>& m, json& j) {
-            j = json::object();
-            for (const auto& kv : m) { json vj; to_json(kv.second, vj); j[kv.first] = std::move(vj); }
-        }
-
-        template <typename T>
-        typename std::enable_if<is_reflectable<T>::value>::type
-        to_json(const T& obj, json& j) {
-            j = json::object();
-            visit_struct(obj, [&](const char* name, const auto& value, const char* /*desc*/) {
-                json vj;
-                to_json(value, vj);
-                j[name] = std::move(vj);
-            });
+        inline Logger struct_to_json_default_logger() {
+            return [](LogLevel level, const std::string& msg) {
+                if (level == 1) std::cerr << "[structmapper] WARNING: " << msg << "\n";
+                else            std::cout << "[structmapper] " << msg << "\n";
+            };
         }
     } // namespace detail
 
-    template <typename T>
-    void to_json(const T& v, json& j) { detail::to_json(v, j); }
+    inline void to_json(bool v, json& j) { j = v; }
+    inline void to_json(const std::string& v, json& j) { j = v; }
 
     template <typename T>
-    json to_json(const T& v) { json j; detail::to_json(v, j); return j; }
+    typename std::enable_if<std::is_arithmetic<T>::value && !std::is_same<T, bool>::value>::type
+    to_json(const T& v, json& j);
+
+    template <typename T>
+    void to_json(const std::vector<T>& v, json& j);
+
+    template <typename V>
+    void to_json(const std::map<std::string, V>& m, json& j);
+
+    template <typename T>
+    typename std::enable_if<is_reflectable<T>::value>::type
+    to_json(const T& obj, json& j);
+
+    template <typename T>
+    typename std::enable_if<std::is_arithmetic<T>::value && !std::is_same<T, bool>::value>::type
+    to_json(const T& v, json& j) { j = v; }
+
+    template <typename T>
+    void to_json(const std::vector<T>& v, json& j) {
+        j = json::array();
+        for (const auto& e : v) { json ej; to_json(e, ej); j.push_back(std::move(ej)); }
+    }
+
+    template <typename V>
+    void to_json(const std::map<std::string, V>& m, json& j) {
+        j = json::object();
+        for (const auto& kv : m) { json vj; to_json(kv.second, vj); j[kv.first] = std::move(vj); }
+    }
+
+    template <typename T>
+    typename std::enable_if<is_reflectable<T>::value>::type
+    to_json(const T& obj, json& j) {
+        j = json::object();
+        visit_struct(obj, [&](const char* name, const auto& value, const char* /*desc*/) {
+            json vj;
+            to_json(value, vj);
+            j[name] = std::move(vj);
+        });
+    }
+
+    template <typename T>
+    json to_json(const T& v) { json j; to_json(v, j); return j; }
 
     // ---------------------------------------------------------------------
     // Reading: json -> T, with logging.
@@ -137,12 +133,12 @@ namespace structmapper {
             ++stats.type_mismatches;
             std::ostringstream msg;
             msg << "type mismatch at " << path << ": expected " << expected << ", got " << got;
-            logger(LogLevel::Warning, msg.str());
+            logger(1, msg.str());
         }
 
         inline void loaded(const json& j, const std::string& path, Logger& logger, FromJsonStats& stats) {
             ++stats.loaded;
-            logger(LogLevel::Info, "loaded " + path + " = " + j.dump());
+            logger(0, "loaded " + path + " = " + j.dump());
         }
 
         // bool
@@ -251,7 +247,7 @@ namespace structmapper {
 
                 if (!j.contains(name)) {
                     ++stats.missing;
-                    logger(LogLevel::Warning, "missing field " + field_path);
+                    logger(1, "missing field " + field_path);
                     return;
                 }
 
@@ -262,7 +258,7 @@ namespace structmapper {
                 if (std::find(known_fields.begin(), known_fields.end(), it.key()) == known_fields.end()) {
                     const std::string field_path = path + "." + it.key();
                     ++stats.unknown_fields;
-                    logger(LogLevel::Warning, "unknown field " + field_path);
+                    logger(1, "unknown field " + field_path);
                 }
             }
             return true;
@@ -274,10 +270,10 @@ namespace structmapper {
     // Public entry point.
     // ---------------------------------------------------------------------
     template <typename T>
-    FromJsonStats from_json(T& obj, const json& j, const std::string& path = "$", Logger logger = default_logger()) {
+    FromJsonStats from_json(T& obj, const json& j, const std::string& path = "$", Logger logger = detail::struct_to_json_default_logger()) {
         FromJsonStats stats;
         detail::from_json(obj, j, path, logger, stats);
-        logger(LogLevel::Info, stats.summary());
+        logger(0, stats.summary());
         return stats;
     }
 
