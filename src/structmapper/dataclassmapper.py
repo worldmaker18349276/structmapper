@@ -1,4 +1,5 @@
 from dataclasses import MISSING, fields, is_dataclass
+import json
 from typing import (
     Any,
     Dict,
@@ -50,6 +51,9 @@ class ClassMismatchWarning(Warning):
     def __str__(self):
         return f"{self.path}: expected {self.expected.__name__}, got {self.got.__name__}"
 
+JSONScalar = Union[bool, int, float, str] # int, float are different, nan, inf are allowed
+JSON = Union[None, JSONScalar, List["JSON"], Dict[str, "JSON"]]
+
 # usage:
 # value_with_external_type: 'ExternalType[Literal["path/to/external.schema.json"]]' = ...
 # you must quote it, even if forward reference is enabled
@@ -84,13 +88,13 @@ def _get_type_hints(
         localns=localns,
     )
 
-def from_dict(cls: Union[type, Any], data: Any, *, path: str = "$"):
+def from_dict(cls: Union[type, Any], data: JSON, *, path: str = "$", check_external: bool = False):
     if cls is Any:
         return data
 
     if isinstance(cls, type) and is_dataclass(cls):
         if not isinstance(data, dict):
-            warnings.warn(TypeMismatchWarning(path, f"dict for {cls.__name__}", type(data).__name__))
+            warnings.warn(TypeMismatchWarning(path, f"struct for {cls.__name__}", type(data).__name__))
             return cls()
 
         type_hints = _get_type_hints(cls)
@@ -106,10 +110,10 @@ def from_dict(cls: Union[type, Any], data: Any, *, path: str = "$"):
                 warnings.warn(MissingWarning(field_path))
                 continue
             
-            kwargs[key] = from_dict(type_hints.get(key, field_map[key].type), data[key], path=field_path)
+            kwargs[key] = from_dict(type_hints.get(key, field_map[key].type), data[key], path=field_path, check_external=check_external)
 
         for key in data.keys(): # type: ignore
-            if isinstance(key, str) and key not in field_map:
+            if key not in field_map:
                 field_path = f"{path}.{key}"
                 warnings.warn(UnknownWarning(field_path))
 
@@ -119,6 +123,9 @@ def from_dict(cls: Union[type, Any], data: Any, *, path: str = "$"):
     args = get_args(cls)
 
     if origin is _ExternalType:
+        if check_external:
+            path = get_args(get_args(cls)[0])[0]
+            type_check_json({"$ref": path}, data, path=path)
         return data
 
     # List[T]
@@ -131,7 +138,7 @@ def from_dict(cls: Union[type, Any], data: Any, *, path: str = "$"):
         element_type = args[0] if args else Any
 
         for i, v in enumerate(data): # type: ignore
-            arr.append(from_dict(element_type, v, path=f"{path}[{i}]"))
+            arr.append(from_dict(element_type, v, path=f"{path}[{i}]", check_external=check_external))
         return arr
 
     # Dict[K, V]
@@ -145,19 +152,19 @@ def from_dict(cls: Union[type, Any], data: Any, *, path: str = "$"):
         value_type = args[1] if len(args) > 1 else Any
 
         for k, v in data.items(): # type: ignore
-            obj[k] = from_dict(value_type, v, path=f"{path}[{k!r}]")
+            obj[k] = from_dict(value_type, v, path=f"{path}[{k!r}]", check_external=check_external)
         return obj
 
     # scalar
     if isinstance(cls, type) and cls in (type(None), bool, int, float, str):
-        if not isinstance(data, cls):
+        if type(data) != cls:
             warnings.warn(TypeMismatchWarning(path, cls.__name__, type(data).__name__))
             return cls()
         return data
 
     raise TypeError(f"unknown type: {cls} ({origin})")
 
-def type_check(cls: Union[type, Any], data: Any, *, path: str = "$") -> bool:
+def type_check(cls: Union[type, Any], data: Any, *, path: str = "$", check_external: bool = False) -> bool:
     if cls is Any:
         return True
 
@@ -173,7 +180,7 @@ def type_check(cls: Union[type, Any], data: Any, *, path: str = "$") -> bool:
 
         for key in field_map.keys():
             field_path = f"{path}.{key}"
-            if not type_check(type_hints.get(key, field_map[key].type), getattr(data, key), path=field_path):
+            if not type_check(type_hints.get(key, field_map[key].type), getattr(data, key), path=field_path, check_external=check_external):
                 ok = False
 
         return ok
@@ -182,8 +189,11 @@ def type_check(cls: Union[type, Any], data: Any, *, path: str = "$") -> bool:
     args = get_args(cls)
 
     if origin is _ExternalType:
-        # TODO: type check
-        return True
+        if check_external:
+            path = get_args(get_args(cls)[0])[0]
+            return type_check_json({"$ref": path}, data, path=path)
+        else:
+            return True
 
     if origin in (list, List):
         if not isinstance(data, list):
@@ -192,7 +202,7 @@ def type_check(cls: Union[type, Any], data: Any, *, path: str = "$") -> bool:
         element_type = args[0] if args else Any
         ok = True
         for i, v in enumerate(data): # type: ignore
-            if not type_check(element_type, v, path=f"{path}[{i}]"):
+            if not type_check(element_type, v, path=f"{path}[{i}]", check_external=check_external):
                 ok = False
         return ok
 
@@ -204,19 +214,114 @@ def type_check(cls: Union[type, Any], data: Any, *, path: str = "$") -> bool:
         value_type = args[1] if len(args) > 1 else Any
         ok = True
         for k, v in data.items(): # type: ignore
-            if not type_check(value_type, v, path=f"{path}[{k!r}]"):
+            if not type_check(value_type, v, path=f"{path}[{k!r}]", check_external=check_external):
                 ok = False
         return ok
 
     if isinstance(cls, type) and cls in (type(None), bool, int, float, str):
-        if not isinstance(data, cls):
+        if type(data) != cls:
             warnings.warn(ClassMismatchWarning(path, cls, data_class))
             return False
         return True
 
     raise TypeError(f"unknown type: {cls} ({origin})")
 
-def to_schema(cls: Union[type, Any]) -> Dict[str, Any]:
+def type_check_json(schema: Dict[Any, Any], data: JSON, *, path: str = "$") -> bool:
+    """Validate `data` against a JSON schema dict, but only the shapes
+    that `to_schema` actually produces - this is NOT a general JSON
+    Schema validator. Recognized forms:
+
+        {}                                                    -> Any
+        {"type": "null"}                                      -> None
+        {"type": "boolean" | "integer" | "number" | "string"} -> scalar
+        {"type": "object", "properties": {...}}               -> dataclass
+        {"type": "object", "additionalProperties": {...}}     -> Dict[str, V]
+        {"type": "array", "items": {...}}                     -> List[T]
+        {"$ref": "..."}                                       -> ExternalType[...], opaque
+        {"anyOf": [{...}]}                                    -> wrapped type
+
+    Uses the same warning classes and the same loose numeric
+    convertibility as `type_check`, and returns True iff no mismatch
+    was found anywhere in the structure.
+    """
+
+    # {} == Any
+    if not schema:
+        return True
+
+    # ExternalType[...] - validated against a schema defined elsewhere
+    if isinstance(ref := schema.get("$ref"), str):
+        with open(ref, "r") as fp:
+            inner_schema = json.load(fp)
+            return type_check_json(inner_schema, data, path=path)
+
+    if isinstance(anyOf := schema.get("anyOf"), list) and anyOf and isinstance(inner_schema := anyOf[0], dict): # type: ignore
+        return type_check_json(inner_schema, data, path=path) # type: ignore
+
+    stype = schema.get("type")
+
+    if stype == "object" and isinstance(properties := schema.get("properties"), dict):
+        if not isinstance(data, dict):
+            warnings.warn(TypeMismatchWarning(path, "struct", type(data).__name__))
+            return False
+
+        ok = True
+        for key, field_schema in properties.items(): # type: ignore
+            if not isinstance(key, str): continue
+            if not isinstance(field_schema, dict): continue
+            field_path = f"{path}.{key}"
+            if key not in data:
+                warnings.warn(MissingWarning(field_path))
+                ok = False
+                continue
+            if not type_check_json(field_schema, data[key], path=field_path): # type: ignore
+                ok = False
+
+        for key in data.keys(): # type: ignore
+            if key not in properties:
+                warnings.warn(UnknownWarning(f"{path}.{key}"))
+                ok = False
+
+        return ok
+
+    if stype == "object" and isinstance(value_schema := schema.get("additionalProperties"), dict):
+        if not isinstance(data, dict):
+            warnings.warn(TypeMismatchWarning(path, "dict", type(data).__name__))
+            return False
+
+        ok = True
+        for k, v in data.items(): # type: ignore
+            if not type_check_json(value_schema, v, path=f"{path}[{k!r}]"): # type: ignore
+                ok = False
+        return ok
+
+    if stype == "array" and isinstance(item_schema := schema.get("items", {}), dict):
+        if not isinstance(data, list):
+            warnings.warn(TypeMismatchWarning(path, "list", type(data).__name__))
+            return False
+
+        ok = True
+        for i, v in enumerate(data): # type: ignore
+            if not type_check_json(item_schema, v, path=f"{path}[{i}]"): # type: ignore
+                ok = False
+        return ok
+
+    SCALAR_TYPES: Dict[str, type] = {
+        "null": type(None),
+        "boolean": bool,
+        "integer": int,
+        "number": float,
+        "string": str,
+    }
+    if stype in SCALAR_TYPES:
+        if type(data) != SCALAR_TYPES[stype]:
+            warnings.warn(TypeMismatchWarning(path, stype, type(data).__name__))
+            return False
+        return True
+
+    raise TypeError(f"unrecognized schema: {schema!r}")
+
+def to_schema(cls: Union[type, Any]) -> Dict[str, JSON]:
     origin = get_origin(cls)
 
     schema: Dict[str, Any] = {}
@@ -230,7 +335,7 @@ def to_schema(cls: Union[type, Any]) -> Dict[str, Any]:
         for f in fields(cls):
             field_schema = to_schema(hints.get(f.name, f.type))
             if f.default is not MISSING:
-                field_schema = {**field_schema, "default": f.default}
+                field_schema = {**field_schema, "default": f.default} # type: ignore
             properties[f.name] = field_schema
         desc = {"description": cleandoc(cls.__doc__)} if cls.__doc__ else {}
         schema = {
