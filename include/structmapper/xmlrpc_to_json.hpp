@@ -61,14 +61,58 @@ namespace structmapper {
     // ---------------------------------------------------------------------
     // Logging
     // ---------------------------------------------------------------------
-    using LogLevel = int; // INFO = 0, WARNING = 1
-    using Logger = std::function<void(LogLevel, const std::string&)>;
+    struct XmlRpcToJsonLog {
+        using LogLevel = int; // INFO = 0, WARNING = 1
+        virtual LogLevel level() const = 0;
+        virtual std::string msg() const = 0;
+    };
+    struct XmlRpcToJsonInvalidValueLog : public XmlRpcToJsonLog {
+        std::string path;
+        XmlRpcToJsonInvalidValueLog(std::string path) : path(path) {}
+        virtual LogLevel level() const override { return 0; }
+        virtual std::string msg() const override {
+            return "unset/invalid value at " + path + " replaced with null";
+        }
+    };
+    struct XmlRpcToJsonDatetimeValueLog : public XmlRpcToJsonLog {
+        std::string path;
+        XmlRpcToJsonDatetimeValueLog(std::string path) : path(path) {}
+        virtual LogLevel level() const override { return 1; }
+        virtual std::string msg() const override {
+            return "datetime value at " + path + " replaced with string";
+        }
+    };
+    struct XmlRpcToJsonBinaryValueLog : public XmlRpcToJsonLog {
+        std::string path;
+        XmlRpcToJsonBinaryValueLog(std::string path) : path(path) {}
+        virtual LogLevel level() const override { return 1; }
+        virtual std::string msg() const override {
+            return "binary value at " + path + " replaced with placeholder";
+        }
+    };
+
+    using XmlRpcToJsonLogger = std::function<void(const XmlRpcToJsonLog&)>;
 
     struct XmlRpcToJsonStats {
         int invalid_values = 0;
         int datetime_values = 0;
         int binary_values = 0;
         bool ok() const { return datetime_values == 0 && binary_values == 0; }
+        XmlRpcToJsonLogger logger(bool print = true) {
+            return [this, print](const XmlRpcToJsonLog& log) {
+                if (print) {
+                    if (log.level() == 1) std::cerr << "[structmapper] WARNING: " << log.msg() << "\n";
+                    else                  std::cout << "[structmapper] " << log.msg() << "\n";
+                }
+
+                if (dynamic_cast<const XmlRpcToJsonInvalidValueLog*>(&log))
+                    ++this->invalid_values;
+                if (dynamic_cast<const XmlRpcToJsonDatetimeValueLog*>(&log))
+                    ++this->datetime_values;
+                if (dynamic_cast<const XmlRpcToJsonBinaryValueLog*>(&log))
+                    ++this->binary_values;
+            };
+        }
         std::string summary() const {
             std::ostringstream summary;
             summary << "xmlrpc_to_json summary: " << invalid_values << " invalid, "
@@ -78,10 +122,49 @@ namespace structmapper {
         }
     };
 
+
+    struct JsonToXmlRpcLog {
+        using LogLevel = int; // INFO = 0, WARNING = 1
+        virtual LogLevel level() const = 0;
+        virtual std::string msg() const = 0;
+    };
+    struct JsonToXmlRpcNullValueLog : public JsonToXmlRpcLog {
+        std::string path;
+        JsonToXmlRpcNullValueLog(std::string path) : path(path) {}
+        virtual LogLevel level() const override { return 0; }
+        virtual std::string msg() const override {
+            return "null at " + path + " encoded as an unset value";
+        }
+    };
+    struct JsonToXmlRpcOversizedIntegerLog : public JsonToXmlRpcLog {
+        std::string path;
+        long long value;
+        JsonToXmlRpcOversizedIntegerLog(std::string path, long long value) : path(path), value(value) {}
+        virtual LogLevel level() const override { return 1; }
+        virtual std::string msg() const override {
+            return "integer at " + path + " (" + std::to_string(value) + ") doesn't fit XML-RPC's 32-bit int; encoded as a double instead";
+        }
+    };
+
+    using JsonToXmlRpcLogger = std::function<void(const JsonToXmlRpcLog&)>;
+
     struct JsonToXmlRpcStats {
         int null_values = 0;
         int oversized_integers = 0;
         bool ok() const { return oversized_integers == 0; }
+        JsonToXmlRpcLogger logger(bool print = true) {
+            return [this, print](const JsonToXmlRpcLog& log) {
+                if (print) {
+                    if (log.level() == 1) std::cerr << "[structmapper] WARNING: " << log.msg() << "\n";
+                    else                  std::cout << "[structmapper] " << log.msg() << "\n";
+                }
+
+                if (dynamic_cast<const JsonToXmlRpcNullValueLog*>(&log))
+                    ++this->null_values;
+                if (dynamic_cast<const JsonToXmlRpcOversizedIntegerLog*>(&log))
+                    ++this->oversized_integers;
+            };
+        }
         std::string summary() const {
             std::ostringstream summary;
             summary << "json_to_xmlrpc summary: " << null_values << " null, "
@@ -92,13 +175,6 @@ namespace structmapper {
 
     namespace detail {
 
-        inline Logger xmlrpc_to_json_default_logger() {
-            return [](LogLevel level, const std::string& msg) {
-                if (level == 1) std::cerr << "[structmapper] WARNING: " << msg << "\n";
-                else            std::cout << "[structmapper] " << msg << "\n";
-            };
-        }
-
         inline std::string format_datetime(struct tm& t) {
             char buf[32];
             // xmlrpc's dateTime.iso8601 carries no timezone info - it's whatever
@@ -107,12 +183,11 @@ namespace structmapper {
             return std::string(buf);
         }
 
-        void xmlrpc_to_json(XmlRpc::XmlRpcValue& v, json& j, const std::string& path, Logger& logger, XmlRpcToJsonStats& stats) {
+        void xmlrpc_to_json(XmlRpc::XmlRpcValue& v, json& j, const std::string& path, XmlRpcToJsonLogger& logger) {
             using Type = XmlRpc::XmlRpcValue::Type;
             switch (v.getType()) {
                 case Type::TypeInvalid: {
-                    ++stats.invalid_values;
-                    logger(1, "unset/invalid value at " + path + " replaced with null");
+                    logger(XmlRpcToJsonInvalidValueLog(path));
                     j = json();
                     return;
                 }
@@ -129,15 +204,13 @@ namespace structmapper {
                     j = json(static_cast<std::string>(v));
                     return;
                 case Type::TypeDateTime: {
-                    ++stats.datetime_values;
-                    logger(1, "datetime value at " + path + " replaced with string");
+                    logger(XmlRpcToJsonDatetimeValueLog(path));
                     j = json(format_datetime(static_cast<struct tm&>(v)));
                     return;
                 }
                 case Type::TypeBase64: {
                     auto& bin = static_cast<XmlRpc::XmlRpcValue::BinaryData&>(v);
-                    ++stats.binary_values;
-                    logger(1, "binary value at " + path + " replaced with placeholder");
+                    logger(XmlRpcToJsonBinaryValueLog(path));
                     j = json::object();
                     j["__type"] = "binary";
                     j["size"] = bin.size();
@@ -148,7 +221,7 @@ namespace structmapper {
                     int n = v.size();
                     for (int i = 0; i < n; ++i) {
                         json e;
-                        xmlrpc_to_json(v[i], e, path + "[" + std::to_string(i) + "]", logger, stats);
+                        ::structmapper::detail::xmlrpc_to_json(v[i], e, path + "[" + std::to_string(i) + "]", logger);
                         j.push_back(std::move(e));
                     }
                     return;
@@ -157,7 +230,7 @@ namespace structmapper {
                     j = json::object();
                     for (auto it = v.begin(); it != v.end(); ++it) {
                         json e;
-                        xmlrpc_to_json(it->second, e, path + "." + it->first, logger, stats);
+                        ::structmapper::detail::xmlrpc_to_json(it->second, e, path + "." + it->first, logger);
                         j[it->first] = std::move(e);
                     }
                     return;
@@ -167,24 +240,21 @@ namespace structmapper {
             return;
         }
 
-        inline XmlRpc::XmlRpcValue make_number(const json& j, const std::string& path, Logger& logger, JsonToXmlRpcStats& stats) {
+        inline XmlRpc::XmlRpcValue make_number(const json& j, const std::string& path, JsonToXmlRpcLogger& logger) {
             if (j.is_number_integer()) {
                 long long v = j.get<long long>();
                 if (v >= std::numeric_limits<int>::min() && v <= std::numeric_limits<int>::max()) {
                     return XmlRpc::XmlRpcValue(static_cast<int>(v));
                 }
-                ++stats.oversized_integers;
-                logger(1, "integer at " + path + " (" + std::to_string(v) +
-                                        ") doesn't fit XML-RPC's 32-bit int; encoded as a double instead");
+                logger(JsonToXmlRpcOversizedIntegerLog(path, v));
                 return XmlRpc::XmlRpcValue(static_cast<double>(v));
             }
             return XmlRpc::XmlRpcValue(j.get<double>());
         }
 
-        void json_to_xmlrpc(const json& j, XmlRpc::XmlRpcValue& v, const std::string& path, Logger& logger, JsonToXmlRpcStats& stats) {
+        void json_to_xmlrpc(const json& j, XmlRpc::XmlRpcValue& v, const std::string& path, JsonToXmlRpcLogger& logger) {
             if (j.is_null()) {
-                ++stats.null_values;
-                logger(1, "null at " + path + " has no XML-RPC equivalent; encoded as an unset value");
+                logger(JsonToXmlRpcNullValueLog(path));
                 v = XmlRpc::XmlRpcValue();
                 return;
             }
@@ -193,7 +263,7 @@ namespace structmapper {
                 return;
             }
             if (j.is_number()) {
-                v = make_number(j, path, logger, stats);
+                v = make_number(j, path, logger);
                 return;
             }
             if (j.is_string()) {
@@ -205,7 +275,7 @@ namespace structmapper {
                 v.setSize(static_cast<int>(j.size()));
                 for (size_t i = 0; i < j.size(); ++i) {
                     XmlRpc::XmlRpcValue e;
-                    json_to_xmlrpc(j[i], e, path + "[" + std::to_string(i) + "]", logger, stats);
+                    ::structmapper::detail::json_to_xmlrpc(j[i], e, path + "[" + std::to_string(i) + "]", logger);
                     v[static_cast<int>(i)] = std::move(e);
                 }
                 return;
@@ -214,7 +284,7 @@ namespace structmapper {
                 v = XmlRpc::XmlRpcValue();
                 for (auto it = j.begin(); it != j.end(); ++it) {
                     XmlRpc::XmlRpcValue e;
-                    json_to_xmlrpc(it.value(), e, path + "." + it.key(), logger, stats);
+                    ::structmapper::detail::json_to_xmlrpc(it.value(), e, path + "." + it.key(), logger);
                     v[it.key()] = std::move(e);
                 }
                 return;
@@ -230,18 +300,44 @@ namespace structmapper {
     // ---------------------------------------------------------------------
     // Public entry points.
     // ---------------------------------------------------------------------
-    inline XmlRpcToJsonStats xmlrpc_to_json(XmlRpc::XmlRpcValue& v, json& j, const std::string& path = "$", Logger logger = detail::xmlrpc_to_json_default_logger()) {
-        XmlRpcToJsonStats stats;
-        detail::xmlrpc_to_json(v, j, path, logger, stats);
-        logger(0, stats.summary());
-        return stats;
+    inline void xmlrpc_to_json(XmlRpc::XmlRpcValue& v, json& j, const std::string& path, XmlRpcToJsonLogger logger = {}) {
+        XmlRpcToJsonStats local_stats;
+        if (!logger) logger = local_stats.logger();
+        detail::xmlrpc_to_json(v, j, path, logger);
     }
 
-    inline JsonToXmlRpcStats json_to_xmlrpc(const json& j, XmlRpc::XmlRpcValue& v, const std::string& path = "$", Logger logger = detail::xmlrpc_to_json_default_logger()) {
-        JsonToXmlRpcStats stats;
-        detail::json_to_xmlrpc(j, v, path, logger, stats);
-        logger(0, stats.summary());
-        return stats;
+    inline void xmlrpc_to_json(XmlRpc::XmlRpcValue& v, json& j, XmlRpcToJsonLogger logger = {}) {
+        XmlRpcToJsonStats local_stats;
+        if (!logger) logger = local_stats.logger();
+        detail::xmlrpc_to_json(v, j, "$", logger);
+    }
+
+    inline json convert_xmlrpc_to_json(XmlRpc::XmlRpcValue& v, XmlRpcToJsonLogger logger = {}) {
+        json j;
+        XmlRpcToJsonStats local_stats;
+        if (!logger) logger = local_stats.logger();
+        detail::xmlrpc_to_json(v, j, "$", logger);
+        return j;
+    }
+
+    inline void json_to_xmlrpc(const json& j, XmlRpc::XmlRpcValue& v, const std::string& path, JsonToXmlRpcLogger logger = {}) {
+        JsonToXmlRpcStats local_stats;
+        if (!logger) logger = local_stats.logger();
+        detail::json_to_xmlrpc(j, v, path, logger);
+    }
+
+    inline void json_to_xmlrpc(const json& j, XmlRpc::XmlRpcValue& v, JsonToXmlRpcLogger logger = {}) {
+        JsonToXmlRpcStats local_stats;
+        if (!logger) logger = local_stats.logger();
+        detail::json_to_xmlrpc(j, v, "$", logger);
+    }
+
+    inline XmlRpc::XmlRpcValue convert_json_to_xmlrpc(const json& j, JsonToXmlRpcLogger logger = {}) {
+        XmlRpc::XmlRpcValue v;
+        JsonToXmlRpcStats local_stats;
+        if (!logger) logger = local_stats.logger();
+        detail::json_to_xmlrpc(j, v, "$", logger);
+        return v;
     }
 
 } // namespace structmapper

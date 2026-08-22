@@ -111,7 +111,7 @@ namespace structmapper {
             nlohmann::json j;
             j["description"] = desc;
             if (SchemaTraits<Bare>::is_scalar) {
-                j["default"] = to_json(default_value);
+                j["default"] = ::structmapper::convert_to_json(default_value);
             }
 
             if (is_reflectable<Bare>::value) {
