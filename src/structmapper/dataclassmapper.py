@@ -35,6 +35,15 @@ class UnknownWarning(Warning):
     def __str__(self):
         return f"{self.path}: unknown field"
 
+class ClassMismatchWarning(Warning):
+    def __init__(self, path: str, expected: type, got: type):
+        self.path = path
+        self.expected = expected
+        self.got = got
+
+    def __str__(self):
+        return f"{self.path}: expected {self.expected.__name__}, got {self.got.__name__}"
+
 def from_dict(cls: Union[type, Any], data: Any, *, path: str = "$"):
     if cls is Any:
         return data
@@ -105,6 +114,60 @@ def from_dict(cls: Union[type, Any], data: Any, *, path: str = "$"):
 
     raise TypeError(f"unknown type: {cls} ({origin})")
 
+def type_check(cls: Union[type, Any], data: Any, *, path: str = "$") -> bool:
+    if cls is Any:
+        return True
+
+    data_class: type = type(data) # type: ignore
+    if isinstance(cls, type) and is_dataclass(cls):
+        if not isinstance(data, cls):
+            warnings.warn(ClassMismatchWarning(path, cls, data_class))
+            return False
+
+        type_hints = get_type_hints(cls)
+        field_map = {f.name: f for f in fields(cls)}
+        ok = True
+
+        for key in field_map.keys():
+            field_path = f"{path}.{key}"
+            if not type_check(type_hints.get(key, field_map[key].type), getattr(data, key), path=field_path):
+                ok = False
+
+        return ok
+
+    origin = get_origin(cls)
+    args = get_args(cls)
+
+    if origin in (list, List):
+        if not isinstance(data, list):
+            warnings.warn(ClassMismatchWarning(path, list, data_class))
+            return False
+        element_type = args[0] if args else Any
+        ok = True
+        for i, v in enumerate(data): # type: ignore
+            if not type_check(element_type, v, path=f"{path}[{i}]"):
+                ok = False
+        return ok
+
+    if origin in (dict, Dict, Mapping):
+        if not isinstance(data, dict):
+            warnings.warn(ClassMismatchWarning(path, dict, data_class))
+            return False
+        assert len(args) == 0 or args[0] is str
+        value_type = args[1] if len(args) > 1 else Any
+        ok = True
+        for k, v in data.items(): # type: ignore
+            if not type_check(value_type, v, path=f"{path}[{k!r}]"):
+                ok = False
+        return ok
+
+    if isinstance(cls, type) and cls in (type(None), bool, int, float, str):
+        if not isinstance(data, cls):
+            warnings.warn(ClassMismatchWarning(path, cls, data_class))
+            return False
+        return True
+
+    raise TypeError(f"unknown type: {cls} ({origin})")
 
 def to_schema(cls: Union[type, Any]) -> Dict[str, Any]:
     origin = get_origin(cls)
@@ -114,18 +177,13 @@ def to_schema(cls: Union[type, Any]) -> Dict[str, Any]:
     if cls is Any:
         return schema
 
-    if is_dataclass(cls):
+    if isinstance(cls, type) and is_dataclass(cls):
         hints = get_type_hints(cls)
         properties = {}
         for f in fields(cls):
             field_schema = to_schema(hints.get(f.name, f.type))
             if f.default is not MISSING:
                 field_schema = {**field_schema, "default": f.default}
-            elif f.default_factory is not MISSING:
-                try:
-                    field_schema = {**field_schema, "default": f.default_factory()}
-                except Exception:
-                    pass
             properties[f.name] = field_schema
         desc = {"description": cleandoc(cls.__doc__)} if cls.__doc__ else {}
         schema = {
