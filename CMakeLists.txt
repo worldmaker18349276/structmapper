@@ -29,3 +29,7 @@ if(TARGET test_structmapper)
     ${catkin_LIBRARIES}
   )
 endif()
+
+if(CATKIN_ENABLE_TESTING)
+  catkin_add_nosetests(test)
+endif()
