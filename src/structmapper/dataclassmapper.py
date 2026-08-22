@@ -13,13 +13,13 @@ from inspect import cleandoc
 import warnings
 
 class TypeMismatchWarning(Warning):
-    def __init__(self, path: str, expected: str, data: Any):
+    def __init__(self, path: str, expected: str, got: str):
         self.path = path
         self.expected = expected
-        self.data = data
+        self.got = got
 
     def __str__(self):
-        return f"{self.path}: expected {self.expected}, got {type(self.data).__name__}"
+        return f"{self.path}: expected {self.expected}, got {self.got}"
 
 class MissingWarning(Warning):
     def __init__(self, path: str):
@@ -41,7 +41,7 @@ def from_dict(cls: Union[type, Any], data: Any, *, path: str = "$"):
 
     if isinstance(cls, type) and is_dataclass(cls):
         if not isinstance(data, dict):
-            warnings.warn(TypeMismatchWarning(path, f"dict for {cls.__name__}", data))
+            warnings.warn(TypeMismatchWarning(path, f"dict for {cls.__name__}", type(data).__name__))
             return cls()
 
         type_hints = get_type_hints(cls)
@@ -73,7 +73,7 @@ def from_dict(cls: Union[type, Any], data: Any, *, path: str = "$"):
     if origin in (list, List):
         arr: List[Any] = []
         if not isinstance(data, list):
-            warnings.warn(TypeMismatchWarning(path, "list", data))
+            warnings.warn(TypeMismatchWarning(path, "list", type(data).__name__))
             return arr
 
         element_type = args[0] if args else Any
@@ -86,7 +86,7 @@ def from_dict(cls: Union[type, Any], data: Any, *, path: str = "$"):
     if origin in (dict, Dict, Mapping):
         obj: Dict[str, Any] = {}
         if not isinstance(data, dict):
-            warnings.warn(TypeMismatchWarning(path, "dict", data))
+            warnings.warn(TypeMismatchWarning(path, "dict", type(data).__name__))
             return obj
 
         assert len(args) == 0 or args[0] is str
@@ -99,7 +99,7 @@ def from_dict(cls: Union[type, Any], data: Any, *, path: str = "$"):
     # scalar
     if isinstance(cls, type) and cls in (type(None), bool, int, float, str):
         if not isinstance(data, cls):
-            warnings.warn(TypeMismatchWarning(path, cls.__name__, data))
+            warnings.warn(TypeMismatchWarning(path, cls.__name__, type(data).__name__))
             return cls()
         return data
 
