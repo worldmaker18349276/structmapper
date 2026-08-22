@@ -3,6 +3,7 @@ from typing import (
     Any,
     Dict,
     List,
+    Union,
     get_args,
     get_origin,
     get_type_hints,
@@ -11,20 +12,36 @@ from collections.abc import Mapping
 from inspect import cleandoc
 import warnings
 
+class TypeMismatchWarning(Warning):
+    def __init__(self, path: str, expected: str, data: Any):
+        self.path = path
+        self.expected = expected
+        self.data = data
 
-def _warn(path, message):
-    warnings.warn(f"{path}: {message}", UserWarning)
+    def __str__(self):
+        return f"{self.path}: expected {self.expected}, got {type(self.data).__name__}"
 
-def _warn_type_mismatch(path, expected, data):
-    _warn(path, f"expected {expected}, got {type(data).__name__}")
+class MissingWarning(Warning):
+    def __init__(self, path: str):
+        self.path = path
 
-def from_dict(cls, data, *, path="$"):
+    def __str__(self):
+        return f"{self.path}: missing field"
+
+class UnknownWarning(Warning):
+    def __init__(self, path: str):
+        self.path = path
+
+    def __str__(self):
+        return f"{self.path}: unknown field"
+
+def from_dict(cls: Union[type, Any], data: Any, *, path: str = "$"):
     if cls is Any:
         return data
 
-    if is_dataclass(cls):
+    if isinstance(cls, type) and is_dataclass(cls):
         if not isinstance(data, dict):
-            _warn_type_mismatch(path, f"dict for {cls.__name__}", data)
+            warnings.warn(TypeMismatchWarning(path, f"dict for {cls.__name__}", data))
             return cls()
 
         type_hints = get_type_hints(cls)
@@ -33,18 +50,19 @@ def from_dict(cls, data, *, path="$"):
 
         kwargs = {}
 
-        for key in data:
-            if key not in field_map:
-                _warn(f"{path}.{key}", "unknown field")
+        for key in field_map.keys():
+            field_path = f"{path}.{key}"
+
+            if key not in data:
+                warnings.warn(MissingWarning(field_path))
                 continue
             
-            field = field_map[key]
-            field_path = f"{path}.{key}"
-            kwargs[key] = from_dict(type_hints.get(key, field.type), data[key], path=field_path)
+            kwargs[key] = from_dict(type_hints.get(key, field_map[key].type), data[key], path=field_path)
 
-        for key in field_map.keys():
-            if key not in data:
-                _warn(f"{path}.{key}", "missing field")
+        for key in data.keys(): # type: ignore
+            if isinstance(key, str) and key not in field_map:
+                field_path = f"{path}.{key}"
+                warnings.warn(UnknownWarning(field_path))
 
         return cls(**kwargs)
 
@@ -53,46 +71,48 @@ def from_dict(cls, data, *, path="$"):
 
     # List[T]
     if origin in (list, List):
+        arr: List[Any] = []
         if not isinstance(data, list):
-            _warn_type_mismatch(path, "list", data)
-            return []
+            warnings.warn(TypeMismatchWarning(path, "list", data))
+            return arr
 
         element_type = args[0] if args else Any
 
-        return [
-            from_dict(element_type, v, path=f"{path}[{i}]")
-            for i, v in enumerate(data)
-        ]
+        for i, v in enumerate(data): # type: ignore
+            arr.append(from_dict(element_type, v, path=f"{path}[{i}]"))
+        return arr
 
     # Dict[K, V]
     if origin in (dict, Dict, Mapping):
+        obj: Dict[str, Any] = {}
         if not isinstance(data, dict):
-            _warn_type_mismatch(path, "dict", data)
-            return {}
+            warnings.warn(TypeMismatchWarning(path, "dict", data))
+            return obj
 
         assert len(args) == 0 or args[0] is str
         value_type = args[1] if len(args) > 1 else Any
 
-        return {
-            k: from_dict(value_type, v, path=f"{path}[{k!r}]")
-            for k, v in data.items()
-        }
+        for k, v in data.items(): # type: ignore
+            obj[k] = from_dict(value_type, v, path=f"{path}[{k!r}]")
+        return obj
 
     # scalar
-    if cls in (type(None), bool, int, float, str):
+    if isinstance(cls, type) and cls in (type(None), bool, int, float, str):
         if not isinstance(data, cls):
-            _warn_type_mismatch(path, cls.__name__, data)
+            warnings.warn(TypeMismatchWarning(path, cls.__name__, data))
             return cls()
         return data
 
     raise TypeError(f"unknown type: {cls} ({origin})")
 
 
-def to_schema(cls):
+def to_schema(cls: Union[type, Any]) -> Dict[str, Any]:
     origin = get_origin(cls)
 
+    schema: Dict[str, Any] = {}
+
     if cls is Any:
-        return {}
+        return schema
 
     if is_dataclass(cls):
         hints = get_type_hints(cls)
@@ -108,26 +128,29 @@ def to_schema(cls):
                     pass
             properties[f.name] = field_schema
         desc = {"description": cleandoc(cls.__doc__)} if cls.__doc__ else {}
-        return {
+        schema = {
             "type": "object",
             "properties": properties,
             **desc,
         }
+        return schema
 
     if origin in (list, List):
         args = get_args(cls)
-        return {
+        schema = {
             "type": "array",
             "items": to_schema(args[0] if len(args) == 1 else Any)
         }
+        return schema
 
     if origin in (dict, Dict, Mapping):
         args = get_args(cls)
         assert len(args) == 0 or args[0] is str
-        return {
+        schema = {
             "type": "object",
             "additionalProperties": to_schema(args[1] if len(args) == 2 else Any)
         }
+        return schema
 
     return dict({
         type(None): {"type": "null"},
