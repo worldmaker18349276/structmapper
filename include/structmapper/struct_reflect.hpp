@@ -22,8 +22,85 @@
 #include <tuple>
 #include <utility>
 #include <type_traits>
+#include <string>
+#include <vector>
+#include <map>
 
 namespace structmapper {
+
+    // -----------------------------------------------------------------
+    // is_json_convertible<T>: true iff T is one of the types
+    // to_json/from_json know how to handle:
+    //   - bool
+    //   - arithmetic (int, double, ...)
+    //   - std::string
+    //   - std::vector<U>            where U is itself json-convertible
+    //   - std::map<std::string, U>  where U is itself json-convertible
+    //   - a reflectable struct (has reflect_fields())
+    // Containers recurse, so vector<map<string, vector<int>>> etc. all work.
+    // -----------------------------------------------------------------
+
+    // Detects whether T was declared with BEGIN_STRUCT/END_STRUCT (i.e. has
+    // a reflect_fields() method). Uses declval, so T need not be constructible.
+    template <typename T>
+    class is_reflectable {
+        template <typename U> static auto test(int) -> decltype(std::declval<U&>().reflect_fields(), std::true_type{});
+        template <typename U> static std::false_type test(...);
+    public:
+        static constexpr bool value = decltype(test<T>(0))::value;
+    };
+
+    namespace detail {
+
+        template <typename T>
+        struct is_std_vector : std::false_type {};
+        template <typename T, typename Alloc>
+        struct is_std_vector<std::vector<T, Alloc>> : std::true_type {
+            using value_type = T;
+        };
+
+        template <typename T>
+        struct is_std_string_map : std::false_type {};
+        template <typename T, typename Compare, typename Alloc>
+        struct is_std_string_map<std::map<std::string, T, Compare, Alloc>> : std::true_type {
+            using value_type = T;
+        };
+
+        // Non-container leaf case: bool / arithmetic / string / reflectable.
+        template <typename T>
+        struct is_json_leaf : std::integral_constant<bool,
+            std::is_same<T, bool>::value ||
+            std::is_arithmetic<T>::value ||
+            std::is_same<T, std::string>::value ||
+            ::structmapper::is_reflectable<T>::value
+        > {};
+
+    } // namespace detail
+
+    template <typename T>
+    struct is_json_convertible; // fwd decl, so the recursive cases below can use it
+
+    // Dispatches on "is it a vector" / "is it a string-keyed map" via extra
+    // bool template params, so non-container T never instantiates a
+    // recursive lookup at all - only vector<U>/map<string,U> recurse into U.
+    template <typename T,
+              bool IsVector = detail::is_std_vector<T>::value,
+              bool IsStringMap = detail::is_std_string_map<T>::value>
+    struct is_json_convertible_impl : detail::is_json_leaf<T> {};
+
+    template <typename T>
+    struct is_json_convertible_impl<T, /*IsVector=*/true, /*IsStringMap=*/false>
+        : is_json_convertible<typename detail::is_std_vector<T>::value_type> {};
+
+    template <typename T>
+    struct is_json_convertible_impl<T, /*IsVector=*/false, /*IsStringMap=*/true>
+        : is_json_convertible<typename detail::is_std_string_map<T>::value_type> {};
+
+    template <typename T>
+    struct is_json_convertible : is_json_convertible_impl<T> {};
+
+    template <typename T>
+    constexpr bool is_json_convertible_v = is_json_convertible<T>::value;
 
     // ---------------------------------------------------------------------
     // Field descriptor
@@ -43,18 +120,13 @@ namespace structmapper {
 
     template <typename Class, typename T>
     constexpr FieldInfo<Class, T> make_field(const char* name, T Class::*member, const char* desc) {
+        static_assert(is_json_convertible<T>::value,
+            "structmapper: this field's type is not JSON-convertible. "
+            "Allowed field types are: bool, an arithmetic type, std::string, "
+            "std::vector<U>, std::map<std::string, U> (U checked recursively), "
+            "or another reflectable struct declared with BEGIN_STRUCT/END_STRUCT.");
         return FieldInfo<Class, T>{name, desc, member};
     }
-
-    // Detects whether T was declared with BEGIN_STRUCT/END_STRUCT (i.e. has
-    // a reflect_fields() method). Uses declval, so T need not be constructible.
-    template <typename T>
-    class is_reflectable {
-        template <typename U> static auto test(int) -> decltype(std::declval<U&>().reflect_fields(), std::true_type{});
-        template <typename U> static std::false_type test(...);
-    public:
-        static constexpr bool value = decltype(test<T>(0))::value;
-    };
 
     // ---------------------------------------------------------------------
     // visit_struct: call visitor(name, value_ref, desc) for every field, in

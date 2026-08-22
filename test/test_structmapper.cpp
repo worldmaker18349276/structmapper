@@ -3,6 +3,8 @@
 #include <map>
 #include <string>
 #include <vector>
+#include <unordered_map>
+#include <thread>
 
 #include "structmapper/struct_reflect.hpp"
 #include "structmapper/struct_to_json.hpp"
@@ -43,9 +45,36 @@ struct Camera {
     END_STRUCT()
 };
 
+// struct Sensors {
+//     std::unordered_map<std::string, Camera> cameras = {};
+
+//     BEGIN_STRUCT("sensor parameters")
+//         FIELD(cameras, "set of cameras")
+//     END_STRUCT()
+// };
+
 // =======================================================================
 // structmapper::to_json / from_json
 // =======================================================================
+
+TEST(IsJsonConvertible, AcceptsDocumentedTypes) {
+    EXPECT_TRUE(structmapper::is_json_convertible<bool>::value);
+    EXPECT_TRUE(structmapper::is_json_convertible<int>::value);
+    EXPECT_TRUE(structmapper::is_json_convertible<double>::value);
+    EXPECT_TRUE(structmapper::is_json_convertible<std::string>::value);
+    EXPECT_TRUE((structmapper::is_json_convertible<std::vector<int>>::value));
+    EXPECT_TRUE((structmapper::is_json_convertible<std::map<std::string, int>>::value));
+    EXPECT_TRUE((structmapper::is_json_convertible<std::vector<std::map<std::string, int>>>::value));
+    EXPECT_TRUE(structmapper::is_json_convertible<Camera>::value); // reflectable
+}
+
+TEST(IsJsonConvertible, RejectsUnsupportedTypes) {
+    EXPECT_FALSE((structmapper::is_json_convertible<std::map<int, int>>::value)); // non-string key
+    EXPECT_FALSE((structmapper::is_json_convertible<std::unordered_map<std::string, int>>::value));
+    EXPECT_FALSE(structmapper::is_json_convertible<std::thread>::value);
+    EXPECT_FALSE((structmapper::is_json_convertible<std::vector<std::thread>>::value)); // bad element type
+    EXPECT_FALSE(structmapper::is_json_convertible<int*>::value);
+}
 
 TEST(StructToJson, RoundTripsAllFieldTypes) {
     Camera cam;
