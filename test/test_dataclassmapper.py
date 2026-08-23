@@ -23,6 +23,8 @@ class Config:
     poses: List[Pose]
     values: Dict[str, float]
     enabled: bool
+    topic: Literal["/cam/image_raw"] = "/cam/image_raw"
+    kind: Literal["pinhole", "ortho"] = "pinhole"
 
 
 @dataclass
@@ -296,6 +298,35 @@ class TestFromDict(unittest.TestCase):
             },
         )
 
+    def test_dict_value_enum_mismatch(self):
+        with self.assertWarnsRegex(
+            TypeMismatchWarning,
+            r"^\$: expected 'a' \| 'b', got 'c'$",
+        ):
+            result = from_dict(
+                Literal["a", "b"],
+                "c",
+            )
+
+        self.assertEqual(
+            result,
+            "a",
+        )
+
+        with self.assertWarnsRegex(
+            TypeMismatchWarning,
+            r"^\$: expected 'c', got 'd'$",
+        ):
+            result = from_dict(
+                Literal["c"],
+                "d",
+            )
+
+        self.assertEqual(
+            result,
+            "c",
+        )
+
     def test_dict_structure_mismatch(self):
         with self.assertWarnsRegex(
             TypeMismatchWarning,
@@ -335,6 +366,8 @@ class TestFromDict(unittest.TestCase):
                     },
                     "enabled": True,
                     "unknown": 123,
+                    "topic": "/cam/image_raw",
+                    "kind": "ortho",
                 },
             )
 
@@ -364,6 +397,7 @@ class TestFromDict(unittest.TestCase):
                 ],
                 enabled=True,
                 values={"a": 1.0, "b": 0.0},
+                kind="ortho",
             ),
         )
 
@@ -467,6 +501,14 @@ class TestToSchema(unittest.TestCase):
                     },
                    "enabled": {"type": "boolean"},
                    "name": {"type": "string"},
+                   "topic": {
+                       "const": "/cam/image_raw",
+                       "default": "/cam/image_raw",
+                    },
+                   "kind": {
+                       "enum": ["pinhole", "ortho"],
+                       "default": "pinhole",
+                    },
                 },
             },
         )

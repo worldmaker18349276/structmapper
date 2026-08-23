@@ -128,6 +128,12 @@ def from_dict(cls: Union[type, Any], data: JSON, *, path: str = "$", check_exter
             type_check_json({"$ref": path}, data, path=path)
         return data
 
+    if origin is Literal:
+        if data not in args:
+            warnings.warn(TypeMismatchWarning(path, " | ".join(repr(value) for value in args), repr(data)))
+            return args[0]
+        return data
+
     # List[T]
     if origin in (list, List):
         arr: List[Any] = []
@@ -195,6 +201,12 @@ def type_check(cls: Union[type, Any], data: Any, *, path: str = "$", check_exter
         else:
             return True
 
+    if origin is Literal:
+        if data not in args:
+            warnings.warn(TypeMismatchWarning(path, " | ".join(repr(value) for value in args), repr(data)))
+            return False
+        return True
+
     if origin in (list, List):
         if not isinstance(data, list):
             warnings.warn(ClassMismatchWarning(path, list, data_class))
@@ -239,6 +251,8 @@ def type_check_json(schema: Dict[Any, Any], data: JSON, *, path: str = "$") -> b
         {"type": "array", "items": {...}}                     -> List[T]
         {"$ref": "..."}                                       -> ExternalType[...], opaque
         {"anyOf": [{...}]}                                    -> wrapped type
+        {"enum": [...]}                                       -> enumerated values
+        {"const": ...}                                        -> constant values
 
     Uses the same warning classes and the same loose numeric
     convertibility as `type_check`, and returns True iff no mismatch
@@ -257,6 +271,12 @@ def type_check_json(schema: Dict[Any, Any], data: JSON, *, path: str = "$") -> b
 
     if isinstance(anyOf := schema.get("anyOf"), list) and anyOf and isinstance(inner_schema := anyOf[0], dict): # type: ignore
         return type_check_json(inner_schema, data, path=path) # type: ignore
+
+    if "const" in schema:
+        return schema["const"] == data
+
+    if isinstance(enum := schema.get("enum"), list):
+        return data in enum
 
     stype = schema.get("type")
 
@@ -349,6 +369,13 @@ def to_schema(cls: Union[type, Any]) -> Dict[str, JSON]:
         path = get_args(get_args(cls)[0])[0]
         return {"$ref": path}
 
+    if origin is Literal:
+        args = get_args(cls)
+        if len(args) == 1:
+            return {"const": args[0]}
+        else:
+            return {"enum": [value for value in args]}
+
     if origin in (list, List):
         args = get_args(cls)
         schema = {
@@ -366,10 +393,14 @@ def to_schema(cls: Union[type, Any]) -> Dict[str, JSON]:
         }
         return schema
 
-    return dict({
+    SCALAR_SCHEMA: Dict[type, Dict[str, JSON]] = {
         type(None): {"type": "null"},
         bool: {"type": "boolean"},
         int: {"type": "integer"},
         float: {"type": "number"},
         str: {"type": "string"},
-    }[cls])
+    }
+    if cls in SCALAR_SCHEMA:
+        return dict(SCALAR_SCHEMA[cls])
+
+    raise TypeError(f"unknown type {cls} ({origin})")
