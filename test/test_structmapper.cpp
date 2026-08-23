@@ -6,6 +6,7 @@
 #include <unordered_map>
 #include <thread>
 
+#include "structmapper/strenum.hpp"
 #include "structmapper/struct_reflect.hpp"
 #include "structmapper/struct_to_json.hpp"
 #include "structmapper/struct_to_schema.hpp"
@@ -61,6 +62,106 @@ struct SelfRec {
         FIELD(rec, "map to self")
     END_STRUCT()
 };
+
+using MyEnum = ::strenum::StringEnum<CTSTR("foo"), CTSTR("bar"), CTSTR("a")>;
+
+// =======================================================================
+// StringEnum
+// =======================================================================
+
+TEST(StringEnumTest, ValidValues)
+{
+    constexpr MyEnum e1 = "foo";
+
+    EXPECT_STREQ(e1.c_str(), "foo");
+    EXPECT_STREQ(static_cast<const char*>(e1), "foo");
+
+    MyEnum e2("bar");
+    EXPECT_STREQ(e2.c_str(), "bar");
+
+    MyEnum e3("a");
+    EXPECT_STREQ(e3.c_str(), "a");
+}
+
+TEST(StringEnumTest, Values)
+{
+    ASSERT_EQ(MyEnum::values.size(), 3u);
+
+    EXPECT_STREQ(MyEnum::values[0], "foo");
+    EXPECT_STREQ(MyEnum::values[1], "bar");
+    EXPECT_STREQ(MyEnum::values[2], "a");
+}
+
+TEST(StringEnumTest, ValuesAreCanonicalPointers)
+{
+    MyEnum e1("foo");
+    MyEnum e2("bar");
+    MyEnum e3("a");
+
+    EXPECT_EQ(e1.c_str(), MyEnum::values[0]);
+    EXPECT_EQ(e2.c_str(), MyEnum::values[1]);
+    EXPECT_EQ(e3.c_str(), MyEnum::values[2]);
+}
+
+TEST(StringEnumTest, RuntimeInvalidValueThrows)
+{
+    EXPECT_THROW(
+        MyEnum("invalid"),
+        std::invalid_argument
+    );
+
+    EXPECT_THROW(
+        MyEnum("foobar"),
+        std::invalid_argument
+    );
+
+    EXPECT_THROW(
+        MyEnum(""),
+        std::invalid_argument
+    );
+}
+
+TEST(StringEnumTest, StringConversion)
+{
+    MyEnum e("foo");
+
+    EXPECT_EQ(e.str(), "foo");
+    EXPECT_STREQ(e.c_str(), "foo");
+
+    const char* s = e;
+    EXPECT_STREQ(s, "foo");
+}
+
+TEST(StringEnumTest, DifferentEnumsAreDifferentTypes)
+{
+    using EnumA = ::strenum::StringEnum<CTSTR("foo"), CTSTR("bar")>;
+    using EnumB = ::strenum::StringEnum<CTSTR("foo"), CTSTR("baz")>;
+
+    static_assert(!std::is_same<EnumA, EnumB>::value, "");
+}
+
+TEST(StringEnumTest, DuplicateValues)
+{
+    using EnumC = ::strenum::StringEnum<CTSTR("foo"), CTSTR("foo"), CTSTR("bar")>;
+
+    EnumC e("foo");
+
+    EXPECT_EQ(e.c_str(), EnumC::values[0]);
+    EXPECT_EQ(e.c_str(), EnumC::values[1]);
+}
+
+TEST(StringEnumTest, EmptyEnum)
+{
+    using EmptyEnum = ::strenum::StringEnum<>;
+
+    EXPECT_EQ(EmptyEnum::values.size(), 0u);
+    EXPECT_EQ(EmptyEnum::type_name(), "");
+
+    EXPECT_THROW(
+        EmptyEnum("foo"),
+        std::invalid_argument
+    );
+}
 
 // =======================================================================
 // structmapper::to_json / from_json
