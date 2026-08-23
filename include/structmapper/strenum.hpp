@@ -4,7 +4,6 @@
 #include <stdexcept>
 #include <type_traits>
 #include <initializer_list>
-#include <iostream>
 
 // compile-time string type, built from a char pack
 template <char... Cs>
