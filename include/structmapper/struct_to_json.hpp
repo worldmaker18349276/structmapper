@@ -128,6 +128,9 @@ namespace structmapper {
         inline void to_json(bool v, json& j) { j = v; }
         inline void to_json(const std::string& v, json& j) { j = v; }
 
+        template <typename... Strings>
+        inline void to_json(typename ::strenum::StringEnum<Strings...>& v, json& j) { j = v.c_str(); }
+
         template <typename T>
         typename std::enable_if<std::is_arithmetic<T>::value && !std::is_same<T, bool>::value>::type
         to_json(const T& v, json& j);
@@ -227,6 +230,18 @@ namespace structmapper {
                 return false;
             }
             out = j.get<std::string>();
+            logger(FromJsonLoadLog(path, j));
+            return true;
+        }
+
+        template <typename... Strings>
+        inline bool from_json(typename ::strenum::StringEnum<Strings...>& out, const json& j, const std::string& path, FromJsonLogger& logger) {
+            using Enum = typename ::strenum::StringEnum<Strings...>;
+            if (!j.is_string() || !Enum::is_valid(j.get<std::string>().c_str())) {
+                logger(FromJsonMismatchLog(path, Enum::type_name(), j.type_name()));
+                return false;
+            }
+            out = j.get<std::string>().c_str();
             logger(FromJsonLoadLog(path, j));
             return true;
         }

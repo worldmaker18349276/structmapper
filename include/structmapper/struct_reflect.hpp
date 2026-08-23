@@ -7,9 +7,13 @@
 //       double fov = 60.0;
 //       double aspect = 1.777;
 //
+//       using Kind = strenum::StringEnum<CTSTR("pinhole"), CTSTR("ortho")>;
+//       Kind kind = "pinhole";
+//
 //       BEGIN_STRUCT("camera parameters")
 //           FIELD(fov,    "field of view, degrees")
 //           FIELD(aspect, "aspect ratio")
+//           FIELD(kind,   "camera projection kind")
 //       END_STRUCT()
 //   };
 //
@@ -25,6 +29,7 @@
 #include <string>
 #include <vector>
 #include <map>
+#include "structmapper/strenum.hpp"
 
 namespace structmapper {
 
@@ -34,6 +39,7 @@ namespace structmapper {
     //   - bool
     //   - arithmetic (int, double, ...)
     //   - std::string
+    //   - strenum::StringEnum<...>  (serialized as its current c_str() value)
     //   - std::vector<U>            where U is itself json-convertible
     //   - std::map<std::string, U>  where U is itself json-convertible
     //   - a reflectable struct (has reflect_fields())
@@ -67,12 +73,20 @@ namespace structmapper {
             using value_type = T;
         };
 
-        // Non-container leaf case: bool / arithmetic / string / reflectable.
+        // Recognizes ::strenum::StringEnum<Strings...> specializations, regardless of
+        // how many alternatives it has.
+        template <typename T>
+        struct is_string_enum : std::false_type {};
+        template <typename... Strings>
+        struct is_string_enum<::strenum::StringEnum<Strings...>> : std::true_type {};
+
+        // Non-container leaf case: bool / arithmetic / string / StringEnum / reflectable.
         template <typename T>
         struct is_json_leaf : std::integral_constant<bool,
             std::is_same<T, bool>::value ||
             std::is_arithmetic<T>::value ||
             std::is_same<T, std::string>::value ||
+            is_string_enum<T>::value ||
             ::structmapper::is_reflectable<T>::value
         > {};
 
@@ -124,8 +138,9 @@ namespace structmapper {
         static_assert(is_json_convertible<T>::value,
             "structmapper: this field's type is not JSON-convertible. "
             "Allowed field types are: bool, an arithmetic type, std::string, "
-            "std::vector<U>, std::map<std::string, U> (U checked recursively), "
-            "or another reflectable struct declared with BEGIN_STRUCT/END_STRUCT.");
+            "a StringEnum<...>, std::vector<U>, std::map<std::string, U> "
+            "(U checked recursively), or another reflectable struct declared "
+            "with BEGIN_STRUCT/END_STRUCT.");
         return FieldInfo<Class, T>{name, desc, member};
     }
 

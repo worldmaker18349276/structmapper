@@ -55,6 +55,13 @@ namespace structmapper {
             static constexpr bool is_scalar = true;
         };
 
+        // string enum
+        template <typename... Strings>
+        struct SchemaTraits<::strenum::StringEnum<Strings...>> {
+            static nlohmann::json get() { return {{"enum", {Strings::c_str()...}}}; }
+            static constexpr bool is_scalar = true;
+        };
+
         // forward declaration - combines a type's schema with a field's own
         // description/default. Defined after SchemaTraits so it can use it.
         template <typename T>

@@ -31,6 +31,8 @@ struct Socket {
 struct Camera {
     double fov = 60.0;
     double aspect = 1.777;
+    using Kind = ::strenum::StringEnum<CTSTR("pinhole"), CTSTR("ortho")>;
+    Kind kind = "pinhole";
     bool enabled = true;
     std::vector<int> resolution = {1920, 1080};
     std::map<std::string, int> tags = {};
@@ -39,6 +41,7 @@ struct Camera {
     BEGIN_STRUCT("camera parameters")
         FIELD(fov,        "field of view, degrees")
         FIELD(aspect,     "aspect ratio")
+        FIELD(kind,       "camera projection kind")
         FIELD(enabled,    "whether the camera is active")
         FIELD(resolution, "pixel resolution [w,h]")
         FIELD(tags,       "arbitrary string->int tags")
@@ -155,7 +158,7 @@ TEST(StringEnumTest, EmptyEnum)
     using EmptyEnum = ::strenum::StringEnum<>;
 
     EXPECT_EQ(EmptyEnum::values.size(), 0u);
-    EXPECT_EQ(EmptyEnum::type_name(), "");
+    EXPECT_STREQ(EmptyEnum::type_name(), "");
 
     EXPECT_THROW(
         EmptyEnum("foo"),
@@ -212,6 +215,7 @@ TEST(StructFromJson, AllFieldsPresentAndMatchingTypeAreAllLoaded) {
     json j = {
         {"fov", 45.0},
         {"aspect", 2.0},
+        {"kind", "pinhole"},
         {"enabled", true},
         {"resolution", {800, 600}},
         {"tags", {{"x", 1}}},
@@ -255,7 +259,7 @@ TEST(StructFromJson, MissingKeyLeavesFieldAtItsPriorValue) {
     structmapper::FromJsonStats stats;
     structmapper::from_json(cam, j, stats.logger());
 
-    EXPECT_EQ(stats.missing, 1);
+    EXPECT_EQ(stats.missing, 2);
     EXPECT_EQ(stats.type_mismatches, 0);
     EXPECT_EQ(cam.fov, 123.0) << "missing field must retain its prior value";
 }
