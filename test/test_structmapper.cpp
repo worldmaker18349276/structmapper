@@ -33,6 +33,7 @@ struct Camera {
     double aspect = 1.777;
     using Kind = ::strenum::StringEnum<CTSTR("pinhole"), CTSTR("ortho")>;
     Kind kind = "pinhole";
+    CTSTR("/cam/image_raw") topic{};
     bool enabled = true;
     std::vector<int> resolution = {1920, 1080};
     std::map<std::string, int> tags = {};
@@ -42,6 +43,7 @@ struct Camera {
         FIELD(fov,        "field of view, degrees")
         FIELD(aspect,     "aspect ratio")
         FIELD(kind,       "camera projection kind")
+        FIELD(topic,      "output topic")
         FIELD(enabled,    "whether the camera is active")
         FIELD(resolution, "pixel resolution [w,h]")
         FIELD(tags,       "arbitrary string->int tags")
@@ -216,6 +218,7 @@ TEST(StructFromJson, AllFieldsPresentAndMatchingTypeAreAllLoaded) {
         {"fov", 45.0},
         {"aspect", 2.0},
         {"kind", "pinhole"},
+        {"topic", "/cam/image_raw"},
         {"enabled", true},
         {"resolution", {800, 600}},
         {"tags", {{"x", 1}}},
@@ -247,6 +250,8 @@ TEST(StructFromJson, MissingKeyLeavesFieldAtItsPriorValue) {
     json j = {
         {"aspect", 1.0},
         {"enabled", true},
+        {"kind", "pinhole"},
+        {"topic", "/cam/image_raw"},
         {"resolution", {1, 1}},
         {"tags", json::object()},
         {"socket", {{"id", 0}, {"name", "n"}}},
@@ -259,7 +264,7 @@ TEST(StructFromJson, MissingKeyLeavesFieldAtItsPriorValue) {
     structmapper::FromJsonStats stats;
     structmapper::from_json(cam, j, stats.logger());
 
-    EXPECT_EQ(stats.missing, 2);
+    EXPECT_EQ(stats.missing, 1);
     EXPECT_EQ(stats.type_mismatches, 0);
     EXPECT_EQ(cam.fov, 123.0) << "missing field must retain its prior value";
 }
@@ -283,6 +288,29 @@ TEST(StructFromJson, TypeMismatchLeavesFieldAtPriorValueAndIsCounted) {
     EXPECT_FALSE(stats.ok());
     EXPECT_EQ(stats.type_mismatches, 1);
     EXPECT_EQ(cam.fov, 77.0) << "type-mismatched field must retain prior value";
+}
+
+TEST(StructFromJson, EnumMismatchLeavesFieldAtPriorValueAndIsCounted) {
+    json j = {
+        {"fov", 45.0},
+        {"aspect", 2.0},
+        {"kind", "omni"},
+        {"topic", "/left/image_raw"},
+        {"enabled", true},
+        {"resolution", {800, 600}},
+        {"tags", {{"x", 1}}},
+        {"socket", {{"id", 3}, {"name", "s1"}}},
+    };
+
+    Camera cam;
+
+    structmapper::FromJsonStats stats;
+    structmapper::from_json(cam, j, stats.logger());
+
+    EXPECT_FALSE(stats.ok());
+    EXPECT_EQ(stats.type_mismatches, 2);
+    EXPECT_STREQ(cam.kind, "pinhole") << "type-mismatched field must retain prior value";
+    EXPECT_STREQ(cam.topic.c_str(), "/cam/image_raw") << "type-mismatched field must retain prior value";
 }
 
 TEST(StructFromJson, UnknownJsonKeysAreCountedButDoNotError) {
@@ -362,52 +390,79 @@ TEST(FromJsonStats, SummaryIsNonEmptyAndOkReflectsOnlyTypeMismatches) {
 // structmapper::to_schema<T>()
 // =======================================================================
 
-TEST(ToSchema, StructProducesObjectTypeWithDescriptionAndProperties) {
+TEST(ToSchema, Schema) {
     json schema = structmapper::to_schema<Camera>();
+    json expect = {
+        {"description", "camera parameters"},
+        {"properties", {
+            {"aspect", {
+                {"default", 1.777},
+                {"description", "aspect ratio"},
+                {"type", "number"}
+            }},
+            {"enabled", {
+                {"default", true},
+                {"description", "whether the camera is active"},
+                {"type", "boolean"}
+            }},
+            {"fov", {
+                {"default", 60.0},
+                {"description", "field of view, degrees"},
+                {"type", "number"}
+            }},
+            {"kind", {
+                {"default", "pinhole"},
+                {"description", "camera projection kind"},
+                {"enum", {
+                    "pinhole",
+                    "ortho"
+                }}
+            }},
+            {"resolution", {
+                {"description", "pixel resolution [w,h]"},
+                {"items", {
+                    {"type", "integer"}
+                }},
+                {"type", "array"}
+            }},
+            {"socket", {
+                {"anyOf", {
+                    {
+                        {"description", "inner widget"},
+                        {"properties", {
+                            {"id", {
+                                {"default", 0},
+                                {"description", "socket id"},
+                                {"type", "integer"}
+                            }},
+                            {"name", {
+                                {"default", "unset"},
+                                {"description", "socket name"},
+                                {"type", "string"}
+                            }}
+                        }},
+                        {"type", "object"}
+                    }
+                }},
+                {"description", "camera socket"}
+            }},
+            {"tags", {
+                {"additionalProperties", {
+                    {"type", "integer"}
+                }},
+                {"description", "arbitrary string->int tags"},
+                {"type", "object"}
+            }},
+            {"topic", {
+                {"const", "/cam/image_raw"},
+                {"default", "/cam/image_raw"},
+                {"description", "output topic"}
+            }}
+        }},
+        {"type", "object"},
+    };
 
-    EXPECT_EQ(schema["type"], "object");
-    EXPECT_EQ(schema["description"], "camera parameters");
-    ASSERT_TRUE(schema.contains("properties"));
-    EXPECT_TRUE(schema["properties"].contains("fov"));
-    EXPECT_TRUE(schema["properties"].contains("aspect"));
-    EXPECT_TRUE(schema["properties"].contains("socket"));
-}
-
-TEST(ToSchema, PrimitiveFieldCarriesDescriptionAndDefaultFromValueInit) {
-    json schema = structmapper::to_schema<Camera>();
-    json fov_schema = schema["properties"]["fov"];
-
-    EXPECT_EQ(fov_schema["description"], "field of view, degrees");
-    // default pulled from a value-initialized Camera instance
-    EXPECT_EQ(fov_schema["default"], 60.0);
-}
-
-TEST(ToSchema, NestedReflectableFieldKeepsBothDescriptionsViaAnyOf) {
-    // Doc: field has FIELD(...) description AND the nested struct type has
-    // its own BEGIN_STRUCT description; both are preserved by nesting the
-    // type schema under "anyOf" rather than flattening them together.
-    json schema = structmapper::to_schema<Camera>();
-    json sensor_schema = schema["properties"]["socket"];
-
-    EXPECT_EQ(sensor_schema["description"], "camera socket")
-        << "outer FIELD() description must be preserved";
-
-    ASSERT_TRUE(sensor_schema.contains("anyOf"));
-    ASSERT_EQ(sensor_schema["anyOf"].size(), 1u);
-
-    json inner_schema = sensor_schema["anyOf"][0];
-    EXPECT_EQ(inner_schema["type"], "object");
-    EXPECT_EQ(inner_schema["description"], "inner widget")
-        << "nested struct's own BEGIN_STRUCT description must also be preserved";
-    EXPECT_TRUE(inner_schema["properties"].contains("id"));
-    EXPECT_TRUE(inner_schema["properties"].contains("name"));
-}
-
-TEST(ToSchema, ContainerFieldsGetPlainTypeShape) {
-    json schema = structmapper::to_schema<Camera>();
-
-    EXPECT_EQ(schema["properties"]["resolution"]["type"], "array");
-    EXPECT_EQ(schema["properties"]["tags"]["type"], "object");
+    EXPECT_EQ(schema, expect);
 }
 
 // =======================================================================

@@ -10,10 +10,13 @@
 //       using Kind = strenum::StringEnum<CTSTR("pinhole"), CTSTR("ortho")>;
 //       Kind kind = "pinhole";
 //
+//       CTSTR("/cam/image_raw") topic{};   // fixed, compile-time constant string
+//
 //       BEGIN_STRUCT("camera parameters")
 //           FIELD(fov,    "field of view, degrees")
 //           FIELD(aspect, "aspect ratio")
 //           FIELD(kind,   "camera projection kind")
+//           FIELD(topic,  "output topic")
 //       END_STRUCT()
 //   };
 //
@@ -40,6 +43,7 @@ namespace structmapper {
     //   - arithmetic (int, double, ...)
     //   - std::string
     //   - strenum::StringEnum<...>  (serialized as its current c_str() value)
+    //   - CompileTimeString<...>    (i.e. CTSTR("..."); serialized as its fixed value)
     //   - std::vector<U>            where U is itself json-convertible
     //   - std::map<std::string, U>  where U is itself json-convertible
     //   - a reflectable struct (has reflect_fields())
@@ -80,13 +84,24 @@ namespace structmapper {
         template <typename... Strings>
         struct is_string_enum<::strenum::StringEnum<Strings...>> : std::true_type {};
 
-        // Non-container leaf case: bool / arithmetic / string / StringEnum / reflectable.
+        // Recognizes ::CompileTimeString<Cs...> specializations - i.e. fields
+        // declared as `CTSTR("...") name{};`. These carry a fixed, compile-time
+        // value baked into the type itself (no per-object state), and are
+        // serialized like any other string.
+        template <typename T>
+        struct is_compile_time_string : std::false_type {};
+        template <char... Cs>
+        struct is_compile_time_string<::CompileTimeString<Cs...>> : std::true_type {};
+
+        // Non-container leaf case: bool / arithmetic / string / StringEnum /
+        // CompileTimeString / reflectable.
         template <typename T>
         struct is_json_leaf : std::integral_constant<bool,
             std::is_same<T, bool>::value ||
             std::is_arithmetic<T>::value ||
             std::is_same<T, std::string>::value ||
             is_string_enum<T>::value ||
+            is_compile_time_string<T>::value ||
             ::structmapper::is_reflectable<T>::value
         > {};
 
@@ -138,9 +153,9 @@ namespace structmapper {
         static_assert(is_json_convertible<T>::value,
             "structmapper: this field's type is not JSON-convertible. "
             "Allowed field types are: bool, an arithmetic type, std::string, "
-            "a StringEnum<...>, std::vector<U>, std::map<std::string, U> "
-            "(U checked recursively), or another reflectable struct declared "
-            "with BEGIN_STRUCT/END_STRUCT.");
+            "a StringEnum<...>, a CompileTimeString<...> (CTSTR(\"...\")), "
+            "std::vector<U>, std::map<std::string, U> (U checked recursively), "
+            "or another reflectable struct declared with BEGIN_STRUCT/END_STRUCT.");
         return FieldInfo<Class, T>{name, desc, member};
     }
 

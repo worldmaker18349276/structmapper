@@ -127,9 +127,13 @@ namespace structmapper {
 
         inline void to_json(bool v, json& j) { j = v; }
         inline void to_json(const std::string& v, json& j) { j = v; }
+        inline void to_json(const char* v, json& j) { j = v; }
 
         template <typename... Strings>
         inline void to_json(typename ::strenum::StringEnum<Strings...>& v, json& j) { j = v.c_str(); }
+
+        template <char... Cs>
+        inline void to_json(typename ::CompileTimeString<Cs...>& v, json& j) { j = ::CompileTimeString<Cs...>::c_str(); }
 
         template <typename T>
         typename std::enable_if<std::is_arithmetic<T>::value && !std::is_same<T, bool>::value>::type
@@ -242,6 +246,17 @@ namespace structmapper {
                 return false;
             }
             out = j.get<std::string>().c_str();
+            logger(FromJsonLoadLog(path, j));
+            return true;
+        }
+
+        template <char... Cs>
+        inline bool from_json(typename ::CompileTimeString<Cs...>& out, const json& j, const std::string& path, FromJsonLogger& logger) {
+            using CTString = typename ::CompileTimeString<Cs...>;
+            if (!j.is_string() || j.get<std::string>() != CTString::c_str()) {
+                logger(FromJsonMismatchLog(path, ::strenum::StringEnum<CTString>::type_name(), j.type_name()));
+                return false;
+            }
             logger(FromJsonLoadLog(path, j));
             return true;
         }

@@ -62,6 +62,13 @@ namespace structmapper {
             static constexpr bool is_scalar = true;
         };
 
+        // const string
+        template <char... Cs>
+        struct SchemaTraits<::CompileTimeString<Cs...>> {
+            static nlohmann::json get() { return {{"const", ::CompileTimeString<Cs...>::c_str()}}; }
+            static constexpr bool is_scalar = true;
+        };
+
         // forward declaration - combines a type's schema with a field's own
         // description/default. Defined after SchemaTraits so it can use it.
         template <typename T>
