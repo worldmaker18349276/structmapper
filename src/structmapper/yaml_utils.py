@@ -10,6 +10,7 @@ __all__ = [
     "deep_update", "deep_merge", "deep_copy", "deep_eq", "deep_diff", "deep_iter",
     "FieldAccessError", "FieldPath", "Link",
     "SimpleYAMLLoader", "load_YAML", "SimpleYAMLDumper", "save_YAML",
+    "ExYAMLLoader", "load_ExYAML",
 ]
 
 
@@ -356,6 +357,52 @@ def load_YAML(link: Link) -> JSON:
     """
     with open(link.filepath, 'r') as f:
         data = yaml.load(f, Loader=SimpleYAMLLoader)
+    return link.fieldpath.walk(data)
+
+
+class ExYAMLLoader(SimpleYAMLLoader):
+    pass
+
+def _include_constructor(loader: ExYAMLLoader, node: yaml.nodes.Node) -> JSON:
+    if isinstance(node, yaml.nodes.ScalarNode):
+        link = loader.construct_scalar(node)
+        link = Link.parse(link)
+        with open(link.filepath, 'r') as f:
+            data = yaml.load(f, Loader=type(loader))
+        return link.fieldpath.walk(data)
+    else:
+        raise yaml.constructor.ConstructorError(
+            None, None,
+            f"!include expects a scalar, got {type(node).__name__}",
+            node.start_mark,
+        )
+
+def _merge_constructor(loader: ExYAMLLoader, node: yaml.nodes.Node) -> JSON:
+    if isinstance(node, yaml.nodes.SequenceNode):
+        objs = loader.construct_sequence(node, deep=True)
+        if not objs:
+            return None
+        obj = objs[0]
+        for obj_ in objs[1:]:
+            obj = deep_update(obj, obj_)
+        return obj
+    else:
+        raise yaml.constructor.ConstructorError(
+            None, None,
+            f"!merge expects a sequence, got {type(node).__name__}",
+            node.start_mark,
+        )
+
+ExYAMLLoader.add_constructor("!include", _include_constructor)
+ExYAMLLoader.add_constructor("!merge", _merge_constructor)
+
+# @raises(FieldAccessError)
+def load_ExYAML(link: Link) -> JSON:
+    """
+    load yaml with !include and !merge.
+    """
+    with open(link.filepath, 'r') as f:
+        data = yaml.load(f, Loader=ExYAMLLoader)
     return link.fieldpath.walk(data)
 
 
