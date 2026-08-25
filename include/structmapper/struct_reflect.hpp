@@ -20,6 +20,27 @@
 //       END_STRUCT()
 //   };
 //
+// for third-party structs you can't modify:
+//
+//   struct ThirdPartyCamera {
+//       double fov = 60.0;
+//       double aspect = 1.777;
+//   };
+//
+//   BEGIN_EXTERNAL_STRUCT(ThirdPartyCamera, "camera parameters")
+//       EXTERNAL_FIELD(fov,    "field of view, degrees")
+//       EXTERNAL_FIELD(aspect, "aspect ratio")
+//   END_EXTERNAL_STRUCT()
+//
+// BEGIN_EXTERNAL_STRUCT/END_EXTERNAL_STRUCT must be used at namespace scope
+// (not inside a function or class), and all reflected members must be
+// accessible from outside the class (public, or you've friended
+// structmapper::ExternalReflectTraits<ThirdPartyCamera>). Once registered,
+// ThirdPartyCamera works everywhere a BEGIN_STRUCT type does:
+// is_reflectable<ThirdPartyCamera>::value is true, structmapper::visit_struct()
+// works on it, and it's accepted as a nested field type / vector element /
+// map value, exactly like an intrusively-reflected struct.
+//
 // reflect_fields() returns a std::tuple of FieldInfo<Class, T> - one
 // strongly-typed entry per field, holding a pointer-to-member, a name, and
 // a description. This is intentionally *not* type-erased, so
@@ -37,6 +58,45 @@
 namespace structmapper {
 
     // -----------------------------------------------------------------
+    // External reflection registry.
+    //
+    // Primary (unspecialized) template: by default a type has no externally
+    // registered reflection. BEGIN_EXTERNAL_STRUCT/END_EXTERNAL_STRUCT add a
+    // full specialization for a given CLASS with has_reflection = true, plus
+    // fields()/reflect_struct_desc() static methods mirroring what BEGIN_STRUCT
+    // would have generated as members of CLASS itself.
+    // -----------------------------------------------------------------
+    template <typename T>
+    struct ExternalReflectTraits {
+        static constexpr bool has_reflection = false;
+    };
+
+    // Detects whether T was declared with BEGIN_STRUCT/END_STRUCT (i.e. has
+    // a structmapper_reflectable_tag type). Uses declval, so T need not be
+    // constructible.
+    template <typename T>
+    class is_intrusively_reflectable {
+        template <typename U> static std::true_type  test(typename U::structmapper_reflectable_tag*);
+        template <typename U> static std::false_type test(...);
+    public:
+        static constexpr bool value = decltype(test<T>(nullptr))::value;
+    };
+
+    // Detects whether T was registered via BEGIN_EXTERNAL_STRUCT/END_EXTERNAL_STRUCT.
+    template <typename T>
+    struct is_externally_reflectable
+        : std::integral_constant<bool, ExternalReflectTraits<T>::has_reflection> {};
+
+    // True for either kind of reflection - this is the trait the rest of the
+    // library (is_json_convertible, visit_struct, ...) actually cares about.
+    // A type should never be reflected both ways at once, but if it somehow
+    // were, this just needs either to be true.
+    template <typename T>
+    struct is_reflectable
+        : std::integral_constant<bool,
+            is_intrusively_reflectable<T>::value || is_externally_reflectable<T>::value> {};
+
+    // -----------------------------------------------------------------
     // is_json_convertible<T>: true iff T is one of the types
     // to_json/from_json know how to handle:
     //   - bool
@@ -49,17 +109,6 @@ namespace structmapper {
     //   - a reflectable struct (has reflect_fields())
     // Containers recurse, so vector<map<string, vector<int>>> etc. all work.
     // -----------------------------------------------------------------
-
-    // Detects whether T was declared with BEGIN_STRUCT/END_STRUCT (i.e. has
-    // a structmapper_reflectable_tag type). Uses declval, so T need not be
-    // constructible.
-    template <typename T>
-    class is_reflectable {
-        template <typename U> static std::true_type  test(typename U::structmapper_reflectable_tag*);
-        template <typename U> static std::false_type test(...);
-    public:
-        static constexpr bool value = decltype(test<T>(nullptr))::value;
-    };
 
     namespace detail {
 
@@ -155,15 +204,63 @@ namespace structmapper {
             "Allowed field types are: bool, an arithmetic type, std::string, "
             "a StringEnum<...>, a CompileTimeString<...> (CTSTR(\"...\")), "
             "std::vector<U>, std::map<std::string, U> (U checked recursively), "
-            "or another reflectable struct declared with BEGIN_STRUCT/END_STRUCT.");
+            "or another reflectable struct declared with BEGIN_STRUCT/END_STRUCT "
+            "or BEGIN_EXTERNAL_STRUCT/END_EXTERNAL_STRUCT.");
         return FieldInfo<Class, T>{name, desc, member};
+    }
+
+    // ---------------------------------------------------------------------
+    // reflect_fields(obj) / reflect_struct_desc<T>(): uniform access to a
+    // reflected type's field tuple and description, regardless of whether
+    // Class was reflected intrusively (BEGIN_STRUCT, member functions live on
+    // Class itself) or externally (BEGIN_EXTERNAL_STRUCT, they live on
+    // ExternalReflectTraits<Class> instead). Everything downstream (visit_struct,
+    // future to_json/from_json, etc.) should go through these rather than
+    // calling obj.reflect_fields() directly, so it works for both.
+    // ---------------------------------------------------------------------
+    namespace detail {
+
+        template <typename T>
+        auto reflect_fields_dispatch(const T& obj, std::true_type /*intrusive*/)
+            -> decltype(obj.reflect_fields()) {
+            return obj.reflect_fields();
+        }
+
+        template <typename T>
+        auto reflect_fields_dispatch(const T&, std::false_type /*intrusive*/)
+            -> decltype(ExternalReflectTraits<T>::fields()) {
+            return ExternalReflectTraits<T>::fields();
+        }
+
+        template <typename T>
+        auto reflect_struct_desc_dispatch(std::true_type /*intrusive*/) -> decltype(T::reflect_struct_desc()) {
+            return T::reflect_struct_desc();
+        }
+
+        template <typename T>
+        auto reflect_struct_desc_dispatch(std::false_type /*intrusive*/)
+            -> decltype(ExternalReflectTraits<T>::reflect_struct_desc()) {
+            return ExternalReflectTraits<T>::reflect_struct_desc();
+        }
+
+    } // namespace detail
+
+    template <typename T>
+    auto reflect_fields(const T& obj)
+        -> decltype(detail::reflect_fields_dispatch(obj, std::integral_constant<bool, is_intrusively_reflectable<T>::value>{})) {
+        return detail::reflect_fields_dispatch(obj, std::integral_constant<bool, is_intrusively_reflectable<T>::value>{});
+    }
+
+    template <typename T>
+    const char* reflect_struct_desc() {
+        return detail::reflect_struct_desc_dispatch<T>(std::integral_constant<bool, is_intrusively_reflectable<T>::value>{});
     }
 
     // ---------------------------------------------------------------------
     // visit_struct: call visitor(name, value_ref, desc) for every field, in
     // declaration order, with the *real* field type (not type-erased). Works
-    // for both mutable and const objects - 'obj.reflect_fields()' resolves to
-    // the const-qualified overload automatically when obj is const.
+    // for both mutable and const objects, and for both intrusively- and
+    // externally-reflected classes.
     // ---------------------------------------------------------------------
     namespace detail {
 
@@ -183,14 +280,14 @@ namespace structmapper {
 
     template <typename Class, typename Visitor>
     void visit_struct(Class& obj, Visitor&& visitor) {
-        const auto fields = obj.reflect_fields();
+        const auto fields = reflect_fields(obj);
         detail::visit_impl(obj, fields, std::forward<Visitor>(visitor),
                             std::make_index_sequence<std::tuple_size<decltype(fields)>::value>{});
     }
 
     template <typename Class, typename Visitor>
     void visit_struct(Class& obj1, Class& obj2, Visitor&& visitor) {
-        const auto fields = obj1.reflect_fields();
+        const auto fields = reflect_fields(obj1);
         detail::visit_impl(obj1, obj2, fields, std::forward<Visitor>(visitor),
                             std::make_index_sequence<std::tuple_size<decltype(fields)>::value>{});
     }
@@ -222,3 +319,44 @@ public:                                                                        \
         );                                                                     \
         return fields_;                                                        \
     }
+
+// ---------------------------------------------------------------------
+// External reflection macros - same shape as BEGIN_STRUCT/FIELD/END_STRUCT,
+// but used OUTSIDE the class, at namespace scope, for types you can't or
+// don't want to add BEGIN_STRUCT/END_STRUCT to directly (third-party types,
+// generated code, plain structs from another library, etc).
+//
+// This specializes structmapper::ExternalReflectTraits<CLASS> instead of
+// adding members to CLASS itself, so CLASS needs no modification at all -
+// but its reflected members do need to be accessible from outside CLASS
+// (public, or friend structmapper::ExternalReflectTraits<CLASS>).
+//
+//   BEGIN_EXTERNAL_STRUCT(ThirdPartyCamera, "camera parameters")
+//       EXTERNAL_FIELD(fov,    "field of view, degrees")
+//       EXTERNAL_FIELD(aspect, "aspect ratio")
+//   END_EXTERNAL_STRUCT()
+// ---------------------------------------------------------------------
+
+#define BEGIN_EXTERNAL_STRUCT(CLASS, DESC)                                    \
+namespace structmapper {                                                      \
+    template <>                                                               \
+    struct ExternalReflectTraits<CLASS> {                                     \
+        static constexpr bool has_reflection = true;                          \
+        using ReflectSelf = CLASS;                                            \
+        static const char* reflect_struct_desc() { return DESC; }             \
+        static const auto& fields() {                                         \
+            static const auto fields_ = std::tuple_cat(                       \
+                std::tuple<>{}
+
+#define EXTERNAL_FIELD(VAR, DESC)                                             \
+                , std::make_tuple(::structmapper::make_field<ReflectSelf>(#VAR, &ReflectSelf::VAR, DESC))
+
+#define EXTERNAL_FIELD_(VAR, NAME, DESC)                                      \
+                , std::make_tuple(::structmapper::make_field<ReflectSelf>(NAME, &ReflectSelf::VAR, DESC))
+
+#define END_EXTERNAL_STRUCT()                                                 \
+            );                                                                \
+            return fields_;                                                   \
+        }                                                                     \
+    };                                                                        \
+}
