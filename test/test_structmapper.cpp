@@ -38,6 +38,7 @@ struct Camera {
     std::vector<int> resolution = {1920, 1080};
     std::map<std::string, int> tags = {};
     Socket socket;
+    std::uint32_t buffer_size = 10;
 
     BEGIN_STRUCT("camera parameters")
         FIELD(fov,        "field of view, degrees")
@@ -48,6 +49,7 @@ struct Camera {
         FIELD(resolution, "pixel resolution [w,h]")
         FIELD(tags,       "arbitrary string->int tags")
         FIELD(socket,     "camera socket")
+        FIELD(buffer_size,"buffer size")
     END_STRUCT()
 };
 
@@ -223,6 +225,7 @@ TEST(StructFromJson, AllFieldsPresentAndMatchingTypeAreAllLoaded) {
         {"resolution", {800, 600}},
         {"tags", {{"x", 1}}},
         {"socket", {{"id", 3}, {"name", "s1"}}},
+        {"buffer_size", 15},
     };
 
     Camera cam;
@@ -241,6 +244,7 @@ TEST(StructFromJson, AllFieldsPresentAndMatchingTypeAreAllLoaded) {
     EXPECT_EQ(cam.tags.at("x"), 1);
     EXPECT_EQ(cam.socket.id, 3);
     EXPECT_EQ(cam.socket.name, "s1");
+    EXPECT_EQ(cam.buffer_size, 15);
 }
 
 TEST(StructFromJson, MissingKeyLeavesFieldAtItsPriorValue) {
@@ -255,6 +259,7 @@ TEST(StructFromJson, MissingKeyLeavesFieldAtItsPriorValue) {
         {"resolution", {1, 1}},
         {"tags", json::object()},
         {"socket", {{"id", 0}, {"name", "n"}}},
+        {"buffer_size", 10},
         // "fov" intentionally omitted
     };
 
@@ -288,6 +293,27 @@ TEST(StructFromJson, TypeMismatchLeavesFieldAtPriorValueAndIsCounted) {
     EXPECT_FALSE(stats.ok());
     EXPECT_EQ(stats.type_mismatches, 1);
     EXPECT_EQ(cam.fov, 77.0) << "type-mismatched field must retain prior value";
+}
+
+TEST(StructFromJson, RangeMismatchLeavesFieldAtPriorValueAndIsCounted) {
+    json j = {
+        {"fov", 45.0},
+        {"aspect", 1.0},
+        {"enabled", true},
+        {"resolution", {1, 1}},
+        {"tags", json::object()},
+        {"socket", {{"id", 0}, {"name", "n"}}},
+        {"buffer_size", -1},
+    };
+
+    Camera cam;
+
+    structmapper::FromJsonStats stats;
+    structmapper::from_json(cam, j, stats.logger());
+
+    EXPECT_FALSE(stats.ok());
+    EXPECT_EQ(stats.type_mismatches, 1);
+    EXPECT_EQ(cam.buffer_size, 10) << "type-mismatched field must retain prior value";
 }
 
 TEST(StructFromJson, EnumMismatchLeavesFieldAtPriorValueAndIsCounted) {
@@ -399,6 +425,11 @@ TEST(ToSchema, Schema) {
                 {"default", 1.777},
                 {"description", "aspect ratio"},
                 {"type", "number"}
+            }},
+            {"buffer_size", {
+                {"default", 10},
+                {"description", "buffer size"},
+                {"type", "integer"}
             }},
             {"enabled", {
                 {"default", true},

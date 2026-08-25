@@ -210,7 +210,33 @@ namespace structmapper {
                 logger(FromJsonMismatchLog(path, "integer", j.type_name()));
                 return false;
             }
-            out = j.get<T>();
+
+            if (j.is_number_unsigned()) {
+                uint64_t v = j.get<uint64_t>();
+
+                if (v > static_cast<uint64_t>(std::numeric_limits<T>::max())) {
+                    logger(FromJsonMismatchLog(path, "integer in range", j.type_name()));
+                    return false;
+                }
+                out = static_cast<T>(v);
+            } else {
+                int64_t v = j.get<int64_t>();
+
+                if (std::is_unsigned<T>::value) {
+                    if (v < 0 || static_cast<uint64_t>(v) > static_cast<uint64_t>(std::numeric_limits<T>::max())) {
+                        logger(FromJsonMismatchLog(path, "integer in range", j.type_name()));
+                        return false;
+                    }
+                } else {
+                    if (v < static_cast<int64_t>(std::numeric_limits<T>::min()) ||
+                        v > static_cast<int64_t>(std::numeric_limits<T>::max())) {
+                        logger(FromJsonMismatchLog(path, "integer in range", j.type_name()));
+                        return false;
+                    }
+                }
+                out = static_cast<T>(v);
+            }
+
             logger(FromJsonLoadLog(path, j));
             return true;
         }
@@ -270,7 +296,7 @@ namespace structmapper {
         from_json(T& out, const json& j, const std::string& path, FromJsonLogger& logger);
 
 
-        // vector<T> -> array; bad elements are logged and dropped, good ones kept
+        // vector<T> -> array
         template <typename T>
         bool from_json(std::vector<T>& out, const json& j, const std::string& path, FromJsonLogger& logger) {
             if (!j.is_array()) {
@@ -286,7 +312,7 @@ namespace structmapper {
             return true;
         }
 
-        // map<string, V> -> object; bad entries are logged and dropped, good ones kept
+        // map<string, V> -> object
         template <typename V>
         bool from_json(std::map<std::string, V>& out, const json& j, const std::string& path, FromJsonLogger& logger) {
             if (!j.is_object()) {
