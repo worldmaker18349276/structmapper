@@ -23,13 +23,18 @@
 // for third-party structs you can't modify:
 //
 //   struct ThirdPartyCamera {
-//       double fov = 60.0;
-//       double aspect = 1.777;
+//       double fov_ = 60.0;
+//       double aspect_ = 1.777;
+// 
+//       double& fov() { return fov_; }
+//       const double& fov() const { return fov_; }
+//       double& aspect() { return aspect_; }
+//       const double& aspect() const { return aspect_; }
 //   };
 //
 //   BEGIN_EXTERNAL_STRUCT(ThirdPartyCamera, "camera parameters")
-//       EXTERNAL_FIELD(fov,    "field of view, degrees")
-//       EXTERNAL_FIELD(aspect, "aspect ratio")
+//       EXTERNAL_FIELD_(double, fov(), "fov",       "field of view, degrees")
+//       EXTERNAL_FIELD_(double, aspect(), "aspect", "aspect ratio")
 //   END_EXTERNAL_STRUCT()
 //
 // BEGIN_EXTERNAL_STRUCT/END_EXTERNAL_STRUCT must be used at namespace scope
@@ -209,6 +214,32 @@ namespace structmapper {
         return FieldInfo<Class, T>{name, desc, member};
     }
 
+    template <typename Class, typename T>
+    struct ExternalFieldInfo {
+        const char* name;
+        const char* desc;
+        std::function<T&(Class&)> accessor;
+        std::function<const T&(const Class&)> const_accessor;
+
+        T&       get(Class& obj)       const { return accessor(obj); }
+        const T& get(const Class& obj) const { return const_accessor(obj); }
+
+        using value_type = T;
+        using class_type = Class;
+    };
+
+    template <typename Class, typename T, typename F>
+    constexpr ExternalFieldInfo<Class, T> make_external_field(const char* name, F accessor, const char* desc) {
+        static_assert(is_json_convertible<T>::value,
+            "structmapper: this field's type is not JSON-convertible. "
+            "Allowed field types are: bool, an arithmetic type, std::string, "
+            "a StringEnum<...>, a CompileTimeString<...> (CTSTR(\"...\")), "
+            "std::vector<U>, std::map<std::string, U> (U checked recursively), "
+            "or another reflectable struct declared with BEGIN_STRUCT/END_STRUCT "
+            "or BEGIN_EXTERNAL_STRUCT/END_EXTERNAL_STRUCT.");
+        return ExternalFieldInfo<Class, T>{name, desc, accessor, accessor};
+    }
+
     // ---------------------------------------------------------------------
     // reflect_fields(obj) / reflect_struct_desc<T>(): uniform access to a
     // reflected type's field tuple and description, regardless of whether
@@ -330,11 +361,6 @@ public:                                                                        \
 // adding members to CLASS itself, so CLASS needs no modification at all -
 // but its reflected members do need to be accessible from outside CLASS
 // (public, or friend structmapper::ExternalReflectTraits<CLASS>).
-//
-//   BEGIN_EXTERNAL_STRUCT(ThirdPartyCamera, "camera parameters")
-//       EXTERNAL_FIELD(fov,    "field of view, degrees")
-//       EXTERNAL_FIELD(aspect, "aspect ratio")
-//   END_EXTERNAL_STRUCT()
 // ---------------------------------------------------------------------
 
 #define BEGIN_EXTERNAL_STRUCT(CLASS, DESC)                                    \
@@ -348,11 +374,9 @@ namespace structmapper {                                                      \
             static const auto fields_ = std::tuple_cat(                       \
                 std::tuple<>{}
 
-#define EXTERNAL_FIELD(VAR, DESC)                                             \
-                , std::make_tuple(::structmapper::make_field<ReflectSelf>(#VAR, &ReflectSelf::VAR, DESC))
-
-#define EXTERNAL_FIELD_(VAR, NAME, DESC)                                      \
-                , std::make_tuple(::structmapper::make_field<ReflectSelf>(NAME, &ReflectSelf::VAR, DESC))
+#define EXTERNAL_FIELD_(TYPE, EXPR, NAME, DESC)                               \
+                , std::make_tuple(::structmapper::make_external_field<ReflectSelf, TYPE>(\
+                    NAME, [](auto&& self) -> decltype(auto) { return (std::forward<decltype(self)>(self).EXPR); }, DESC))
 
 #define END_EXTERNAL_STRUCT()                                                 \
             );                                                                \
