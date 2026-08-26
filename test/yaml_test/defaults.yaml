@@ -1,6 +1,0 @@
-timeout: 10
-retries: 3
-
-logging:
-  level: info
-  format: plain

@@ -1,8 +1,0 @@
-hardware:
-  sensors:
-    - lidar
-    - camera
-
-limits:
-  max_speed: 5.0
-  max_acceleration: 2.0

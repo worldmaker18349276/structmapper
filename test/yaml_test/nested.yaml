@@ -1,6 +1,0 @@
-common: !include base.yaml
-
-extra: !include extra.yaml
-
-local:
-  enabled: true
