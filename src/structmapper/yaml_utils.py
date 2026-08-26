@@ -1,3 +1,4 @@
+from inspect import cleandoc
 import math
 from typing import Any, Dict, Generator, List, Set, Tuple, Union, Optional
 from pathlib import Path
@@ -10,12 +11,26 @@ __all__ = [
     "deep_update", "deep_merge", "deep_copy", "deep_eq", "deep_diff", "deep_iter",
     "FieldAccessError", "FieldPath", "Link",
     "SimpleYAMLLoader", "load_YAML", "SimpleYAMLDumper", "save_YAML",
-    "ExYAMLLoader", "load_ExYAML",
+    "TaggedScalar", "TaggedDict", "TaggedList", "TaggedJSON",
+    "ExYAMLLoader", "load_ExYAML", "ExYAMLDumper", "save_ExYAML",
 ]
 
 
 JSONScalar = Union[bool, int, float, str] # int, float are different, nan, inf are allowed
 JSON = Union[None, JSONScalar, List["JSON"], Dict[str, "JSON"]]
+
+@dataclass(frozen=True)
+class TaggedScalar:
+    data: JSONScalar
+    _tag: str = ""
+
+class TaggedDict(Dict[str, "TaggedJSON"]):
+    _tag: str = ""
+
+class TaggedList(List["TaggedJSON"]):
+    _tag: str = ""
+
+TaggedJSON = Union[None, JSONScalar, List["TaggedJSON"], Dict[str, "TaggedJSON"], TaggedScalar, TaggedList, TaggedDict]
 
 
 def is_JSON(data: Any) -> bool:
@@ -361,15 +376,23 @@ def load_YAML(link: Link) -> JSON:
 
 
 class ExYAMLLoader(SimpleYAMLLoader):
-    pass
+    def set_filepath(self, filepath: Path):
+        self.filepath = filepath
 
-def _include_constructor(loader: ExYAMLLoader, node: yaml.nodes.Node) -> JSON:
+def _include_constructor(loader: ExYAMLLoader, node: yaml.nodes.Node) -> TaggedJSON:
     if isinstance(node, yaml.nodes.ScalarNode):
         link = loader.construct_scalar(node)
         link = Link.parse(link)
-        with open(link.filepath, 'r') as f:
-            data = yaml.load(f, Loader=type(loader))
-        return link.fieldpath.walk(data)
+
+        subfilepath = loader.filepath.parent / link.filepath
+        with open(subfilepath, 'r') as f:
+            subloader = type(loader)(f)
+            subloader.set_filepath(subfilepath)
+            try:
+                data = subloader.get_single_data()
+            finally:
+                subloader.dispose()
+        return link.fieldpath.walk(data) # type: ignore
     else:
         raise yaml.constructor.ConstructorError(
             None, None,
@@ -377,7 +400,7 @@ def _include_constructor(loader: ExYAMLLoader, node: yaml.nodes.Node) -> JSON:
             node.start_mark,
         )
 
-def _merge_constructor(loader: ExYAMLLoader, node: yaml.nodes.Node) -> JSON:
+def _merge_constructor(loader: ExYAMLLoader, node: yaml.nodes.Node) -> TaggedJSON:
     if isinstance(node, yaml.nodes.SequenceNode):
         objs = loader.construct_sequence(node, deep=True)
         if not objs:
@@ -385,7 +408,7 @@ def _merge_constructor(loader: ExYAMLLoader, node: yaml.nodes.Node) -> JSON:
         obj = objs[0]
         for obj_ in objs[1:]:
             obj = deep_update(obj, obj_)
-        return obj
+        return obj # type: ignore
     else:
         raise yaml.constructor.ConstructorError(
             None, None,
@@ -393,17 +416,44 @@ def _merge_constructor(loader: ExYAMLLoader, node: yaml.nodes.Node) -> JSON:
             node.start_mark,
         )
 
+def _unknown_tag_constructor(loader: ExYAMLLoader, tag_suffix: str, node: yaml.nodes.Node) -> TaggedJSON:
+    if isinstance(node, yaml.ScalarNode):
+        value = loader.construct_scalar(node)
+    elif isinstance(node, yaml.SequenceNode):
+        value = loader.construct_sequence(node)
+    elif isinstance(node, yaml.MappingNode):
+        value = loader.construct_mapping(node)
+    else:
+        assert False
+
+    if isinstance(value, list):
+        value = TaggedList(value)
+        value._tag = tag_suffix
+        return value
+    if isinstance(value, dict):
+        value = TaggedDict(value)
+        value._tag = tag_suffix
+        return value
+    return TaggedScalar(value, tag_suffix)
+
 ExYAMLLoader.add_constructor("!include", _include_constructor)
 ExYAMLLoader.add_constructor("!merge", _merge_constructor)
+ExYAMLLoader.add_multi_constructor("!", _unknown_tag_constructor)
 
 # @raises(FieldAccessError)
-def load_ExYAML(link: Link) -> JSON:
+def load_ExYAML(link: Link) -> TaggedJSON:
     """
-    load yaml with !include and !merge.
+    load yaml with !include and !merge, and keep other tags.
     """
-    with open(link.filepath, 'r') as f:
-        data = yaml.load(f, Loader=ExYAMLLoader)
-    return link.fieldpath.walk(data)
+    filepath = link.filepath.resolve()
+    with open(filepath, 'r') as f:
+        loader = ExYAMLLoader(f)
+        loader.set_filepath(filepath)
+        try:
+            data = loader.get_single_data()
+        finally:
+            loader.dispose()
+    return link.fieldpath.walk(data) # type: ignore
 
 
 class SimpleYAMLDumper(yaml.SafeDumper):
@@ -470,3 +520,56 @@ def save_YAML(data: JSON, path: Path):
     with open(path, 'w') as f:
         yaml.dump(data, f, Dumper=SimpleYAMLDumper, sort_keys=False)
 
+
+class ExYAMLDumper(SimpleYAMLDumper):
+    pass
+
+def _tagged_scalar_representer(self: ExYAMLDumper, data: TaggedScalar):
+    node = self.represent_data(data.data)
+    return self.represent_scalar(f"!{data._tag}", node.value)
+
+def _tagged_list_representer(self: ExYAMLDumper, data: TaggedList):
+    return self.represent_sequence(f"!{data._tag}", data, flow_style=is_vec_like(data))
+
+def _tagged_dict_representer(self: ExYAMLDumper, data: TaggedDict):
+    return self.represent_mapping(f"!{data._tag}", data, flow_style=is_vec_like(data))
+
+ExYAMLDumper.add_representer(TaggedScalar, _tagged_scalar_representer)
+ExYAMLDumper.add_representer(TaggedList, _tagged_list_representer)
+ExYAMLDumper.add_representer(TaggedDict, _tagged_dict_representer)
+
+def save_ExYAML(data: TaggedJSON, path: Path):
+    """
+    dump tagged json object, same as save_YAML.
+    """
+    with open(path, 'w') as f:
+        yaml.dump(data, f, Dumper=ExYAMLDumper, sort_keys=False)
+
+
+def _resolve_yaml(link: str):
+    """
+    python -m structmapper.yaml_utils <yaml file>
+
+    it dumps resolved yaml (!include, !merge are resolved, other tags are kept)
+    """
+
+    import warnings
+    def formatwarning(message, category, filename, lineno, line=None): # type: ignore
+        return "".join(
+            f"# {'     ' if i else 'WARN:'} {line}\n"
+            for i, line in enumerate(str(message).splitlines()) # type: ignore
+        )
+    warnings.formatwarning = formatwarning
+
+    data = load_ExYAML(Link.parse(link))
+    data_str = yaml.dump(data, Dumper=ExYAMLDumper, sort_keys=False)
+
+    sys.stderr.flush()
+    print(data_str)
+
+if __name__ == "__main__":
+    import sys
+    if len(sys.argv) != 2:
+        print(cleandoc(_resolve_yaml.__doc__ or ""))
+        exit(1)
+    _resolve_yaml(sys.argv[1])
