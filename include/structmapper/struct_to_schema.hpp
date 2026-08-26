@@ -62,7 +62,7 @@ namespace structmapper {
             static constexpr bool is_scalar = true;
         };
 
-        // const string
+        // compile-time string
         template <char... Cs>
         struct SchemaTraits<::CompileTimeString<Cs...>> {
             static nlohmann::json get() { return {{"const", ::CompileTimeString<Cs...>::c_str()}}; }
@@ -104,7 +104,7 @@ namespace structmapper {
             static nlohmann::json get() {
                 nlohmann::json j;
                 j["type"] = "object";
-                j["description"] = T::reflect_struct_desc();
+                j["description"] = reflect_struct_desc<T>();
 
                 nlohmann::json props = nlohmann::json::object();
                 T default_obj{}; // value-initialized: gives every field a concrete default
