@@ -53,6 +53,53 @@ struct Camera {
     END_STRUCT()
 };
 
+struct Vector {
+    double data[3];
+    
+    double& x() { return data[0]; }
+    const double& x() const { return data[0]; }
+    double& y() { return data[1]; }
+    const double& y() const { return data[1]; }
+    double& z() { return data[2]; }
+    const double& z() const { return data[2]; }
+};
+
+BEGIN_EXTERNAL_STRUCT(Vector, "vector")
+    EXTERNAL_FIELD_(double, x(), "x", "x coordinate")
+    EXTERNAL_FIELD_(double, y(), "y", "y coordinate")
+    EXTERNAL_FIELD_(double, z(), "z", "z coordinate")
+END_EXTERNAL_STRUCT()
+
+struct Quaternion {
+    double data[4];
+    
+    double& x() { return data[0]; }
+    const double& x() const { return data[0]; }
+    double& y() { return data[1]; }
+    const double& y() const { return data[1]; }
+    double& z() { return data[2]; }
+    const double& z() const { return data[2]; }
+    double& w() { return data[3]; }
+    const double& w() const { return data[3]; }
+};
+
+BEGIN_EXTERNAL_STRUCT(Quaternion, "quaternion")
+    EXTERNAL_FIELD_(double, x(), "x", "x coordinate")
+    EXTERNAL_FIELD_(double, y(), "y", "y coordinate")
+    EXTERNAL_FIELD_(double, z(), "z", "z coordinate")
+    EXTERNAL_FIELD_(double, w(), "w", "w coordinate")
+END_EXTERNAL_STRUCT()
+
+struct Pose {
+    Vector position;
+    Quaternion orientation;
+    
+    BEGIN_STRUCT("pose")
+        FIELD(position, "position of pose")
+        FIELD(orientation, "orientation of pose")
+    END_STRUCT()
+};
+
 // // .../test_structmapper.cpp:53:9:   required from here
 // // .../struct_reflect.hpp:123:47: error: static assertion failed: ...
 // struct Sensors {
@@ -215,6 +262,21 @@ TEST(StructToJson, RoundTripsAllFieldTypes) {
     EXPECT_EQ(j["socket"]["name"], "cmos");
 }
 
+TEST(StructToJson, WithExternalType) {
+    Pose pose{
+        Vector{0.0, 0.0, 1.0},
+        Quaternion{0.5, -0.5, 0.5, -0.5},
+    };
+
+    json j = structmapper::convert_to_json(pose);
+    json expected = {
+        {"position", {{"x", 0.0}, {"y", 0.0}, {"z", 1.0}}},
+        {"orientation", {{"x", 0.5}, {"y", -0.5}, {"z", 0.5}, {"w", -0.5}}},
+    };
+
+    EXPECT_EQ(j, expected);
+}
+
 TEST(StructFromJson, AllFieldsPresentAndMatchingTypeAreAllLoaded) {
     json j = {
         {"fov", 45.0},
@@ -245,6 +307,30 @@ TEST(StructFromJson, AllFieldsPresentAndMatchingTypeAreAllLoaded) {
     EXPECT_EQ(cam.socket.id, 3);
     EXPECT_EQ(cam.socket.name, "s1");
     EXPECT_EQ(cam.buffer_size, 15);
+}
+
+TEST(StructFromJson, WithExternalType) {
+    json j = {
+        {"position", {{"x", 0.0}, {"y", 0.0}, {"z", 1.0}}},
+        {"orientation", {{"x", 0.5}, {"y", -0.5}, {"z", 0.5}, {"w", -0.5}}},
+    };
+
+    Pose pose;
+    structmapper::FromJsonStats stats;
+    pose = structmapper::convert_from_json<Pose>(j, stats.logger());
+
+    EXPECT_TRUE(stats.ok());
+    EXPECT_EQ(stats.missing, 0);
+    EXPECT_EQ(stats.type_mismatches, 0);
+    EXPECT_EQ(stats.unknown_fields, 0);
+
+    EXPECT_EQ(pose.position.x(), 0.0);
+    EXPECT_EQ(pose.position.y(), 0.0);
+    EXPECT_EQ(pose.position.z(), 1.0);
+    EXPECT_EQ(pose.orientation.x(), 0.5);
+    EXPECT_EQ(pose.orientation.y(), -0.5);
+    EXPECT_EQ(pose.orientation.z(), 0.5);
+    EXPECT_EQ(pose.orientation.w(), -0.5);
 }
 
 TEST(StructFromJson, MissingKeyLeavesFieldAtItsPriorValue) {
@@ -491,6 +577,75 @@ TEST(ToSchema, Schema) {
             }}
         }},
         {"type", "object"},
+    };
+
+    EXPECT_EQ(schema, expect);
+}
+
+TEST(ToSchema, SchemaWithExternalType) {
+    json schema = structmapper::to_schema<Pose>();
+    json expect = {
+        {"description", "pose"},
+        {"properties", {
+            {"orientation", {
+                {"anyOf", {
+                    {
+                        {"description", "quaternion"},
+                        {"properties", {
+                            {"w", {
+                                {"default", 0.0},
+                                {"description", "w coordinate"},
+                                {"type", "number"},
+                            }},
+                            {"x", {
+                                {"default", 0.0},
+                                {"description", "x coordinate"},
+                                {"type", "number"},
+                            }},
+                            {"y", {
+                                {"default", 0.0},
+                                {"description", "y coordinate"},
+                                {"type", "number"},
+                            }},
+                            {"z", {
+                                {"default", 0.0},
+                                {"description", "z coordinate"},
+                                {"type", "number"},
+                            }},
+                        }},
+                        {"type", "object"}
+                    }
+                }},
+                {"description", "orientation of pose"}
+            }},
+            {"position", {
+                {"anyOf", {
+                    {
+                        {"description", "vector"},
+                        {"properties", {
+                            {"x", {
+                                {"default", 0.0},
+                                {"description", "x coordinate"},
+                                {"type", "number"},
+                            }},
+                            {"y", {
+                                {"default", 0.0},
+                                {"description", "y coordinate"},
+                                {"type", "number"},
+                            }},
+                            {"z", {
+                                {"default", 0.0},
+                                {"description", "z coordinate"},
+                                {"type", "number"},
+                            }},
+                        }},
+                        {"type", "object"}
+                    }
+                }},
+                {"description", "position of pose"}
+            }}
+        }},
+        {"type", "object"}
     };
 
     EXPECT_EQ(schema, expect);
