@@ -54,6 +54,7 @@
 #pragma once
 #include <tuple>
 #include <utility>
+#include <functional>
 #include <type_traits>
 #include <string>
 #include <vector>
