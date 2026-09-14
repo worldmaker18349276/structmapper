@@ -1,12 +1,15 @@
+from contextlib import contextmanager
 from dataclasses import MISSING, fields, is_dataclass
 import json
+from pathlib import Path
+from types import ModuleType
 from typing import (
     Any,
     Dict,
     List,
     Generic,
     Literal,
-    Optional,
+    Tuple,
     Type,
     TypeVar,
     Union,
@@ -60,35 +63,53 @@ JSON = Union[None, JSONScalar, List["JSON"], Dict[str, "JSON"]]
 ExternalType = Any
 
 L = TypeVar("L")
-
-class _ExternalType(Generic[L]):
+P = TypeVar("P")
+class _ExternalType(Generic[L, P]):
     ...
 
 class _ExternalTypeProxy:
     def __class_getitem__(cls, item: Any):
-        # ExternalType[Literal["foo.json"]]
+        # ExternalType[Literal["xxx"]] -> _ExternalType[Literal["xxx"], Literal["mymodule.py"]]
         literal = get_args(item)
         if len(literal) != 1 or not isinstance(literal[0], str):
             raise TypeError("ExternalType[...] requires Literal[str]")
-        return _ExternalType[Literal[literal[0]]]
+        caller_frame = sys._getframe(1) # pyright: ignore[reportPrivateUsage]
+        literal_filepath = str(caller_frame.f_globals.get("__file__") or "")
+        return _ExternalType[Literal[literal[0]], Literal[literal_filepath]]
 
-def _get_type_hints(
-    cls: Type[Any],
-    *,
-    globalns: Optional[Dict[str, Any]] = None,
-    localns: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
-    module = sys.modules.get(cls.__module__)
-    globalns = dict(vars(module)) if module is not None else {}
-    globalns["ExternalType"] = _ExternalTypeProxy
+@contextmanager
+def _inject_into_mro_modules(cls: Type[Any], name: str, value: Any):
+    """
+    Temporarily inject `name = value` into the real __dict__ of every
+    module referenced by cls.__mro__, so native get_type_hints (which
+    uses sys.modules[base.__module__].__dict__ per base when globalns=None)
+    can resolve `name` during eval — then restore each module exactly
+    as it was.
+    """
+    touched: List[Tuple[ModuleType, bool, Any]] = []  # (module, name, had_key, old_value)
+    try:
+        for base in cls.__mro__:
+            module = sys.modules.get(base.__module__)
+            if module is None:
+                continue
+            had_key = name in module.__dict__
+            old_value = module.__dict__.get(name)
+            touched.append((module, had_key, old_value))
+            module.__dict__[name] = value
+        yield
+    finally:
+        for module, had_key, old_value in touched:
+            if had_key:
+                module.__dict__[name] = old_value
+            else:
+                module.__dict__.pop(name, None)
 
-    return get_type_hints(
-        cls,
-        globalns=globalns,
-        localns=localns,
-    )
+def _get_type_hints(cls: Type[Any]) -> Dict[str, Any]:
+    with _inject_into_mro_modules(cls, "ExternalType", _ExternalTypeProxy):
+        return get_type_hints(cls)
 
-def from_dict(cls: Union[type, Any], data: JSON, *, path: str = "$", check_external: bool = False):
+
+def from_json(cls: Union[type, Any], data: JSON, *, path: str = "$", check_external: bool = False):
     if cls is Any:
         return data
 
@@ -101,7 +122,7 @@ def from_dict(cls: Union[type, Any], data: JSON, *, path: str = "$", check_exter
 
         field_map = {f.name: f for f in fields(cls)}
 
-        kwargs = {}
+        kwargs: Dict[str, Any] = {}
 
         for key in field_map.keys():
             field_path = f"{path}.{key}"
@@ -110,7 +131,7 @@ def from_dict(cls: Union[type, Any], data: JSON, *, path: str = "$", check_exter
                 warnings.warn(MissingWarning(field_path))
                 continue
             
-            kwargs[key] = from_dict(type_hints.get(key, field_map[key].type), data[key], path=field_path, check_external=check_external)
+            kwargs[key] = from_json(type_hints.get(key, field_map[key].type), data[key], path=field_path, check_external=check_external)
 
         for key in data.keys(): # type: ignore
             if key not in field_map:
@@ -124,8 +145,9 @@ def from_dict(cls: Union[type, Any], data: JSON, *, path: str = "$", check_exter
 
     if origin is _ExternalType:
         if check_external:
-            path = get_args(get_args(cls)[0])[0]
-            type_check_json({"$ref": path}, data, path=path)
+            schema_filepath = get_args(get_args(cls)[0])[0]
+            literal_filepath = get_args(get_args(cls)[1])[0]
+            type_check_json({"$ref": schema_filepath}, literal_filepath, data, path=path)
         return data
 
     if origin is Literal:
@@ -144,7 +166,7 @@ def from_dict(cls: Union[type, Any], data: JSON, *, path: str = "$", check_exter
         element_type = args[0] if args else Any
 
         for i, v in enumerate(data): # type: ignore
-            arr.append(from_dict(element_type, v, path=f"{path}[{i}]", check_external=check_external))
+            arr.append(from_json(element_type, v, path=f"{path}[{i}]", check_external=check_external))
         return arr
 
     # Dict[K, V]
@@ -158,7 +180,7 @@ def from_dict(cls: Union[type, Any], data: JSON, *, path: str = "$", check_exter
         value_type = args[1] if len(args) > 1 else Any
 
         for k, v in data.items(): # type: ignore
-            obj[k] = from_dict(value_type, v, path=f"{path}[{k!r}]", check_external=check_external)
+            obj[k] = from_json(value_type, v, path=f"{path}[{k!r}]", check_external=check_external)
         return obj
 
     # scalar
@@ -169,6 +191,15 @@ def from_dict(cls: Union[type, Any], data: JSON, *, path: str = "$", check_exter
         return data
 
     raise TypeError(f"unknown type: {cls} ({origin})")
+
+DataclassT = TypeVar("DataclassT")
+class FromJson:
+    @classmethod
+    def from_json(cls: Type[DataclassT], data: JSON) -> DataclassT:
+        """
+        construct dataclass from json in depth, use default value if fails.
+        """
+        return from_json(cls, data) # pyright: ignore[reportReturnType]
 
 def type_check(cls: Union[type, Any], data: Any, *, path: str = "$", check_external: bool = False) -> bool:
     if cls is Any:
@@ -196,8 +227,9 @@ def type_check(cls: Union[type, Any], data: Any, *, path: str = "$", check_exter
 
     if origin is _ExternalType:
         if check_external:
-            path = get_args(get_args(cls)[0])[0]
-            return type_check_json({"$ref": path}, data, path=path)
+            schema_filepath = get_args(get_args(cls)[0])[0]
+            literal_filepath = get_args(get_args(cls)[1])[0]
+            return type_check_json({"$ref": schema_filepath}, literal_filepath, data, path=path)
         else:
             return True
 
@@ -238,7 +270,7 @@ def type_check(cls: Union[type, Any], data: Any, *, path: str = "$", check_exter
 
     raise TypeError(f"unknown type: {cls} ({origin})")
 
-def type_check_json(schema: Dict[Any, Any], data: JSON, *, path: str = "$") -> bool:
+def type_check_json(schema: Dict[Any, Any], schema_path: Path, data: JSON, *, path: str = "$") -> bool:
     """Validate `data` against a JSON schema dict, but only the shapes
     that `to_schema` actually produces - this is NOT a general JSON
     Schema validator. Recognized forms:
@@ -265,12 +297,13 @@ def type_check_json(schema: Dict[Any, Any], data: JSON, *, path: str = "$") -> b
 
     # ExternalType[...] - validated against a schema defined elsewhere
     if isinstance(ref := schema.get("$ref"), str):
-        with open(ref, "r") as fp:
+        inner_schema_path = schema_path.parent / ref
+        with open(inner_schema_path, "r") as fp:
             inner_schema = json.load(fp)
-            return type_check_json(inner_schema, data, path=path)
+            return type_check_json(inner_schema, inner_schema_path, data, path=path)
 
     if isinstance(anyOf := schema.get("anyOf"), list) and anyOf and isinstance(inner_schema := anyOf[0], dict): # type: ignore
-        return type_check_json(inner_schema, data, path=path) # type: ignore
+        return type_check_json(inner_schema, schema_path, data, path=path) # type: ignore
 
     if "const" in schema:
         return schema["const"] == data
@@ -294,7 +327,7 @@ def type_check_json(schema: Dict[Any, Any], data: JSON, *, path: str = "$") -> b
                 warnings.warn(MissingWarning(field_path))
                 ok = False
                 continue
-            if not type_check_json(field_schema, data[key], path=field_path): # type: ignore
+            if not type_check_json(field_schema, schema_path, data[key], path=field_path): # type: ignore
                 ok = False
 
         for key in data.keys(): # type: ignore
@@ -311,7 +344,7 @@ def type_check_json(schema: Dict[Any, Any], data: JSON, *, path: str = "$") -> b
 
         ok = True
         for k, v in data.items(): # type: ignore
-            if not type_check_json(value_schema, v, path=f"{path}[{k!r}]"): # type: ignore
+            if not type_check_json(value_schema, schema_path, v, path=f"{path}[{k!r}]"): # type: ignore
                 ok = False
         return ok
 
@@ -322,7 +355,7 @@ def type_check_json(schema: Dict[Any, Any], data: JSON, *, path: str = "$") -> b
 
         ok = True
         for i, v in enumerate(data): # type: ignore
-            if not type_check_json(item_schema, v, path=f"{path}[{i}]"): # type: ignore
+            if not type_check_json(item_schema, schema_path, v, path=f"{path}[{i}]"): # type: ignore
                 ok = False
         return ok
 
