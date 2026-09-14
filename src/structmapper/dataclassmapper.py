@@ -13,6 +13,7 @@ from typing import (
     Type,
     TypeVar,
     Union,
+    cast,
     get_args,
     get_origin,
     get_type_hints,
@@ -133,7 +134,7 @@ def from_json(cls: Union[type, Any], data: JSON, *, path: str = "$", check_exter
             
             kwargs[key] = from_json(type_hints.get(key, field_map[key].type), data[key], path=field_path, check_external=check_external)
 
-        for key in data.keys(): # type: ignore
+        for key in data.keys():
             if key not in field_map:
                 field_path = f"{path}.{key}"
                 warnings.warn(UnknownWarning(field_path))
@@ -165,7 +166,7 @@ def from_json(cls: Union[type, Any], data: JSON, *, path: str = "$", check_exter
 
         element_type = args[0] if args else Any
 
-        for i, v in enumerate(data): # type: ignore
+        for i, v in enumerate(data):
             arr.append(from_json(element_type, v, path=f"{path}[{i}]", check_external=check_external))
         return arr
 
@@ -179,7 +180,7 @@ def from_json(cls: Union[type, Any], data: JSON, *, path: str = "$", check_exter
         assert len(args) == 0 or args[0] is str
         value_type = args[1] if len(args) > 1 else Any
 
-        for k, v in data.items(): # type: ignore
+        for k, v in data.items():
             obj[k] = from_json(value_type, v, path=f"{path}[{k!r}]", check_external=check_external)
         return obj
 
@@ -199,13 +200,13 @@ class FromJson:
         """
         construct dataclass from json in depth, use default value if fails.
         """
-        return from_json(cls, data) # pyright: ignore[reportReturnType]
+        return cast(DataclassT, from_json(cls, data))
 
 def type_check(cls: Union[type, Any], data: Any, *, path: str = "$", check_external: bool = False) -> bool:
     if cls is Any:
         return True
 
-    data_class: type = type(data) # type: ignore
+    data_class = cast(Type[Any], type(data))
     if isinstance(cls, type) and is_dataclass(cls):
         if not isinstance(data, cls):
             warnings.warn(ClassMismatchWarning(path, cls, data_class))
@@ -245,7 +246,7 @@ def type_check(cls: Union[type, Any], data: Any, *, path: str = "$", check_exter
             return False
         element_type = args[0] if args else Any
         ok = True
-        for i, v in enumerate(data): # type: ignore
+        for i, v in enumerate(cast(List[Any], data)):
             if not type_check(element_type, v, path=f"{path}[{i}]", check_external=check_external):
                 ok = False
         return ok
@@ -257,7 +258,7 @@ def type_check(cls: Union[type, Any], data: Any, *, path: str = "$", check_exter
         assert len(args) == 0 or args[0] is str
         value_type = args[1] if len(args) > 1 else Any
         ok = True
-        for k, v in data.items(): # type: ignore
+        for k, v in cast(Dict[str, Any], data).items():
             if not type_check(value_type, v, path=f"{path}[{k!r}]", check_external=check_external):
                 ok = False
         return ok
@@ -302,8 +303,8 @@ def type_check_json(schema: Dict[Any, Any], schema_path: Path, data: JSON, *, pa
             inner_schema = json.load(fp)
             return type_check_json(inner_schema, inner_schema_path, data, path=path)
 
-    if isinstance(anyOf := schema.get("anyOf"), list) and anyOf and isinstance(inner_schema := anyOf[0], dict): # type: ignore
-        return type_check_json(inner_schema, schema_path, data, path=path) # type: ignore
+    if isinstance(anyOf := schema.get("anyOf"), list) and anyOf and isinstance(inner_schema := cast(Any, anyOf[0]), dict):
+        return type_check_json(cast(Dict[Any, Any], inner_schema), schema_path, data, path=path)
 
     if "const" in schema:
         return schema["const"] == data
@@ -319,7 +320,7 @@ def type_check_json(schema: Dict[Any, Any], schema_path: Path, data: JSON, *, pa
             return False
 
         ok = True
-        for key, field_schema in properties.items(): # type: ignore
+        for key, field_schema in cast(Dict[Any, Any], properties).items():
             if not isinstance(key, str): continue
             if not isinstance(field_schema, dict): continue
             field_path = f"{path}.{key}"
@@ -327,10 +328,10 @@ def type_check_json(schema: Dict[Any, Any], schema_path: Path, data: JSON, *, pa
                 warnings.warn(MissingWarning(field_path))
                 ok = False
                 continue
-            if not type_check_json(field_schema, schema_path, data[key], path=field_path): # type: ignore
+            if not type_check_json(cast(Dict[Any, Any], field_schema), schema_path, data[key], path=field_path):
                 ok = False
 
-        for key in data.keys(): # type: ignore
+        for key in data.keys():
             if key not in properties:
                 warnings.warn(UnknownWarning(f"{path}.{key}"))
                 ok = False
@@ -343,8 +344,8 @@ def type_check_json(schema: Dict[Any, Any], schema_path: Path, data: JSON, *, pa
             return False
 
         ok = True
-        for k, v in data.items(): # type: ignore
-            if not type_check_json(value_schema, schema_path, v, path=f"{path}[{k!r}]"): # type: ignore
+        for k, v in data.items():
+            if not type_check_json(cast(Dict[Any, Any], value_schema), schema_path, v, path=f"{path}[{k!r}]"):
                 ok = False
         return ok
 
@@ -354,8 +355,8 @@ def type_check_json(schema: Dict[Any, Any], schema_path: Path, data: JSON, *, pa
             return False
 
         ok = True
-        for i, v in enumerate(data): # type: ignore
-            if not type_check_json(item_schema, schema_path, v, path=f"{path}[{i}]"): # type: ignore
+        for i, v in enumerate(data):
+            if not type_check_json(cast(Dict[Any, Any], item_schema), schema_path, v, path=f"{path}[{i}]"):
                 ok = False
         return ok
 
@@ -388,7 +389,7 @@ def to_schema(cls: Union[type, Any]) -> Dict[str, JSON]:
         for f in fields(cls):
             field_schema = to_schema(hints.get(f.name, f.type))
             if f.default is not MISSING:
-                field_schema = {**field_schema, "default": f.default} # type: ignore
+                field_schema = cast(Dict[str, JSON], {**field_schema, "default": f.default})
             properties[f.name] = field_schema
         desc = {"description": cleandoc(cls.__doc__)} if cls.__doc__ else {}
         schema = {
