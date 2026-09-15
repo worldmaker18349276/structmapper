@@ -157,8 +157,8 @@ def from_json(cls: Union[type, Any], data: JSON, *, path: str = "$", check_exter
             return args[0]
         return data
 
-    # List[T]
-    if origin in (list, List):
+    # List[T] or Tuple[T, ...]
+    if origin in (list, List) or origin in (tuple, Tuple) and len(args) == 2 and args[-1] == (Ellipsis,):
         arr: List[Any] = []
         if not isinstance(data, list):
             warnings.warn(TypeMismatchWarning(path, "list", type(data).__name__))
@@ -168,7 +168,20 @@ def from_json(cls: Union[type, Any], data: JSON, *, path: str = "$", check_exter
 
         for i, v in enumerate(data):
             arr.append(from_json(element_type, v, path=f"{path}[{i}]", check_external=check_external))
-        return arr
+        return tuple(arr) if origin in (tuple, Tuple) else arr
+
+    # Tuple[T, T, T], elements should be the same type
+    if origin in (tuple, Tuple) and len(set(args)) == 1:
+        arr: List[Any] = []
+        if not isinstance(data, list) or len(data) != len(args):
+            warnings.warn(TypeMismatchWarning(path, f"{len(args)}-tuple", type(data).__name__))
+            return arr
+
+        element_type = args[0] if args else Any
+
+        for i in range(len(args)):
+            arr.append(from_json(element_type, data[i], path=f"{path}[{i}]", check_external=check_external))
+        return tuple(arr)
 
     # Dict[K, V]
     if origin in (dict, Dict, Mapping):
@@ -201,6 +214,9 @@ class FromJson:
         construct dataclass from json in depth, use default value if fails.
         """
         return cast(DataclassT, from_json(cls, data))
+    @classmethod
+    def as_schema(cls) -> JSON:
+        return to_schema(cls)
 
 def type_check(cls: Union[type, Any], data: Any, *, path: str = "$", check_external: bool = False) -> bool:
     if cls is Any:
@@ -240,7 +256,7 @@ def type_check(cls: Union[type, Any], data: Any, *, path: str = "$", check_exter
             return False
         return True
 
-    if origin in (list, List):
+    if origin in (list, List) or origin in (tuple, Tuple) and len(args) == 2 and args[-1] == (Ellipsis,):
         if not isinstance(data, list):
             warnings.warn(ClassMismatchWarning(path, list, data_class))
             return False
@@ -248,6 +264,19 @@ def type_check(cls: Union[type, Any], data: Any, *, path: str = "$", check_exter
         ok = True
         for i, v in enumerate(cast(List[Any], data)):
             if not type_check(element_type, v, path=f"{path}[{i}]", check_external=check_external):
+                ok = False
+        return ok
+
+    if origin in (tuple, Tuple) and len(set(args)) == 1:
+        if not isinstance(data, list) or len(cast(List[Any], data)) != len(args):
+            warnings.warn(ClassMismatchWarning(path, tuple, data_class))
+            return False
+
+        element_type = args[0] if args else Any
+
+        ok = True
+        for i in range(len(args)):
+            if not type_check(element_type, data[i], path=f"{path}[{i}]", check_external=check_external):
                 ok = False
         return ok
 
@@ -377,6 +406,7 @@ def type_check_json(schema: Dict[Any, Any], schema_path: Path, data: JSON, *, pa
 
 def to_schema(cls: Union[type, Any]) -> Dict[str, JSON]:
     origin = get_origin(cls)
+    args = get_args(cls)
 
     schema: Dict[str, Any] = {}
 
@@ -400,18 +430,24 @@ def to_schema(cls: Union[type, Any]) -> Dict[str, JSON]:
         return schema
 
     if origin is _ExternalType:
-        path = get_args(get_args(cls)[0])[0]
+        path = get_args(args[0])[0]
         return {"$ref": path}
 
     if origin is Literal:
-        args = get_args(cls)
         if len(args) == 1:
             return {"const": args[0]}
         else:
             return {"enum": [value for value in args]}
 
-    if origin in (list, List):
-        args = get_args(cls)
+    if origin in (list, List) or origin in (tuple, Tuple) and len(args) == 2 and args[-1] == (Ellipsis,):
+        schema = {
+            "type": "array",
+            "items": to_schema(args[0] if len(args) == 1 else Any)
+        }
+        return schema
+
+    if origin in (tuple, Tuple) and len(set(args)) == 1:
+        # ignore length of tuple
         schema = {
             "type": "array",
             "items": to_schema(args[0] if len(args) == 1 else Any)
@@ -419,7 +455,6 @@ def to_schema(cls: Union[type, Any]) -> Dict[str, JSON]:
         return schema
 
     if origin in (dict, Dict, Mapping):
-        args = get_args(cls)
         assert len(args) == 0 or args[0] is str
         schema = {
             "type": "object",
