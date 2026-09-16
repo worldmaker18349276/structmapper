@@ -215,7 +215,7 @@ class FromJson:
         """
         return cast(DataclassT, from_json(cls, data))
     @classmethod
-    def as_schema(cls) -> JSON:
+    def to_schema(cls) -> JSON:
         return to_schema(cls)
 
 def type_check(cls: Union[type, Any], data: Any, *, path: str = "$", check_external: bool = False) -> bool:
