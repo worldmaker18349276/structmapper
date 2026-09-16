@@ -430,8 +430,10 @@ def to_schema(cls: Union[type, Any]) -> Dict[str, JSON]:
         return schema
 
     if origin is _ExternalType:
-        path = get_args(args[0])[0]
-        return {"$ref": path}
+        schema_filepath = get_args(args[0])[0]
+        literal_filepath = get_args(args[1])[0]
+        path = Path(literal_filepath).parent / Path(schema_filepath)
+        return {"$ref": str(path)}
 
     if origin is Literal:
         if len(args) == 1:
