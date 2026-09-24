@@ -23,6 +23,13 @@ import sys
 from inspect import cleandoc
 import warnings
 
+__all__ = [
+    "TypeMismatchWarning", "MissingWarning", "UnknownWarning", "ClassMismatchWarning",
+    "JSONScalar", "JSON", "ExternalType",
+    "from_json", "FromJson",
+    "type_check", "type_check_json", "to_schema",
+]
+
 class TypeMismatchWarning(Warning):
     def __init__(self, path: str, expected: str, got: str):
         self.path = path
@@ -111,6 +118,22 @@ def _get_type_hints(cls: Type[Any]) -> Dict[str, Any]:
 
 
 def from_json(cls: Union[type, Any], data: JSON, *, path: str = "$", check_external: bool = False):
+    """
+    convert json to object in depth, use default value if fails.
+    `cls` can be:
+    - dataclass with valid type hints for from_json, it must be default constructable.
+    - JSON type: NoneType, bool, int, float, str, List[T], Dict[str, T]
+    - schema type: ExternalType[Literal['path/to/your.schema.json']]
+    - variable-size tuple: Tuple[T, ...]
+    - fixed-size tuple: Tuple[T, T, T]
+    - string enum: Literal['option1', 'option2', 'option3']
+    - Any
+    where T is valid type hint for `from_json`.
+    
+    type will be checked and warnings will be issued if mismatch.
+    scalar type must match exactly, so False is not a int.
+    if `check_external` is true, the external type will also be checked.
+    """
     if cls is Any:
         return data
 
@@ -208,6 +231,18 @@ def from_json(cls: Union[type, Any], data: JSON, *, path: str = "$", check_exter
 
 DataclassT = TypeVar("DataclassT")
 class FromJson:
+    """
+    make dataclass convertible from json in depth.
+
+    usage:
+    @dataclass
+    class MyDataclass(FromJson):
+        a: int
+        b: AnotherDataclass
+    
+    obj = MyDataclass.from_json(data)
+    schema = MyDataclass.to_schema()
+    """
     @classmethod
     def from_json(cls: Type[DataclassT], data: JSON) -> DataclassT:
         """
@@ -219,6 +254,9 @@ class FromJson:
         return to_schema(cls)
 
 def type_check(cls: Union[type, Any], data: Any, *, path: str = "$", check_external: bool = False) -> bool:
+    """
+    Validate `data` against a type hint `cls` like `from_json`, without construct instance.
+    """
     if cls is Any:
         return True
 
@@ -302,11 +340,11 @@ def type_check(cls: Union[type, Any], data: Any, *, path: str = "$", check_exter
 
 def type_check_json(schema: Dict[Any, Any], schema_path: Path, data: JSON, *, path: str = "$") -> bool:
     """Validate `data` against a JSON schema dict, but only the shapes
-    that `to_schema` actually produces - this is NOT a general JSON
-    Schema validator. Recognized forms:
+    that `to_schema` actually produces.
+    Recognized forms:
 
         {}                                                    -> Any
-        {"type": "null"}                                      -> None
+        {"type": "null"}                                      -> NoneType
         {"type": "boolean" | "integer" | "number" | "string"} -> scalar
         {"type": "object", "properties": {...}}               -> dataclass
         {"type": "object", "additionalProperties": {...}}     -> Dict[str, V]
@@ -315,10 +353,6 @@ def type_check_json(schema: Dict[Any, Any], schema_path: Path, data: JSON, *, pa
         {"anyOf": [{...}]}                                    -> wrapped type
         {"enum": [...]}                                       -> enumerated values
         {"const": ...}                                        -> constant values
-
-    Uses the same warning classes and the same loose numeric
-    convertibility as `type_check`, and returns True iff no mismatch
-    was found anywhere in the structure.
     """
 
     # {} == Any
@@ -405,6 +439,23 @@ def type_check_json(schema: Dict[Any, Any], schema_path: Path, data: JSON, *, pa
     raise TypeError(f"unrecognized schema: {schema!r}")
 
 def to_schema(cls: Union[type, Any]) -> Dict[str, JSON]:
+    """
+    convert type hints (valid for `from_json`) to JSON schema.
+    
+        Any                       -> {}
+        NoneType                  -> {"type": "null"}
+        scalar                    -> {"type": "boolean" | "integer" | "number" | "string"}
+        dataclass                 -> {"type": "object", "properties": {...}}
+        Dict[str, V]              -> {"type": "object", "additionalProperties": {...}}
+        List[T], Tuple[T, ...]    -> {"type": "array", "items": {...}}
+        Tuple[T, T, T]            -> {"type": "array", "items": {...}}, no minItems/maxItems
+        ExternalType[...]         -> {"$ref": "..."}
+        Literal["...", ...]       -> {"enum": [...]}
+        Literal["..."]            -> {"const": ...}
+    
+    description of dataclass will be appended if exists.
+
+    """
     origin = get_origin(cls)
     args = get_args(cls)
 
