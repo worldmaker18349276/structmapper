@@ -148,7 +148,7 @@ def from_json(cls: Union[type, Any], data: JSON, *, path: str = "$", check_exter
         if check_external:
             schema_filepath = get_args(get_args(cls)[0])[0]
             literal_filepath = get_args(get_args(cls)[1])[0]
-            type_check_json({"$ref": schema_filepath}, literal_filepath, data, path=path)
+            type_check_json({"$ref": schema_filepath}, Path(literal_filepath), data, path=path)
         return data
 
     if origin is Literal:
@@ -246,7 +246,7 @@ def type_check(cls: Union[type, Any], data: Any, *, path: str = "$", check_exter
         if check_external:
             schema_filepath = get_args(get_args(cls)[0])[0]
             literal_filepath = get_args(get_args(cls)[1])[0]
-            return type_check_json({"$ref": schema_filepath}, literal_filepath, data, path=path)
+            return type_check_json({"$ref": schema_filepath}, Path(literal_filepath), data, path=path)
         else:
             return True
 

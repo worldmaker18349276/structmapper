@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Literal, Mapping
 from unittest.mock import patch, mock_open
 import json
 
-from structmapper.dataclassmapper import ExternalType, from_dict, to_schema, TypeMismatchWarning, UnknownWarning, MissingWarning, type_check
+from structmapper.dataclassmapper import ExternalType, from_json, to_schema, TypeMismatchWarning, UnknownWarning, MissingWarning, type_check
 
 
 @dataclass
@@ -81,27 +81,27 @@ class WithExternal:
 class TestFromDict(unittest.TestCase):
 
     def test_any(self):
-        self.assertEqual(from_dict(Any, 123), 123)
-        self.assertEqual(from_dict(Any, {"a": 1}), {"a": 1})
+        self.assertEqual(from_json(Any, 123), 123)
+        self.assertEqual(from_json(Any, {"a": 1}), {"a": 1})
 
     def test_scalar(self):
-        self.assertEqual(from_dict(int, 123), 123)
-        self.assertEqual(from_dict(float, 1.5), 1.5)
-        self.assertEqual(from_dict(str, "hello"), "hello")
-        self.assertEqual(from_dict(bool, True), True)
-        self.assertIsNone(from_dict(type(None), None))
+        self.assertEqual(from_json(int, 123), 123)
+        self.assertEqual(from_json(float, 1.5), 1.5)
+        self.assertEqual(from_json(str, "hello"), "hello")
+        self.assertEqual(from_json(bool, True), True)
+        self.assertIsNone(from_json(type(None), None))
 
     def test_scalar_type_mismatch(self):
         with self.assertWarnsRegex(
             TypeMismatchWarning,
             r"^\$: expected int, got str$",
         ):
-            result = from_dict(int, "123")
+            result = from_json(int, "123")
 
         self.assertEqual(result, 0)
 
     def test_dataclass(self):
-        result = from_dict(
+        result = from_json(
             Pose,
             {
                 "x": 1.0,
@@ -112,7 +112,7 @@ class TestFromDict(unittest.TestCase):
         self.assertEqual(result, Pose(1.0, 2.0))
 
     def test_nested_dataclass(self):
-        result = from_dict(
+        result = from_json(
             Config,
             {
                 "name": "test",
@@ -154,7 +154,7 @@ class TestFromDict(unittest.TestCase):
             TypeMismatchWarning,
             r"^\$\.x: expected float, got str$",
         ):
-            result = from_dict(
+            result = from_json(
                 Pose,
                 {
                     "x": "bad",
@@ -169,7 +169,7 @@ class TestFromDict(unittest.TestCase):
             UnknownWarning,
             r"^\$\.unknown: unknown field$",
         ):
-            result = from_dict(
+            result = from_json(
                 Pose,
                 {
                     "x": 1.0,
@@ -186,7 +186,7 @@ class TestFromDict(unittest.TestCase):
             r"^\$\.y: missing field$",
         ):
             with self.assertRaises(TypeError):
-                from_dict(
+                from_json(
                     Pose,
                     {
                         "x": 1.0,
@@ -198,7 +198,7 @@ class TestFromDict(unittest.TestCase):
             MissingWarning,
             r"^\$\.name: missing field$",
         ):
-            result = from_dict(
+            result = from_json(
                 Defaults,
                 {
                     "count": 10,
@@ -213,13 +213,13 @@ class TestFromDict(unittest.TestCase):
 
     def test_list(self):
         self.assertEqual(
-            from_dict(List[int], [1, 2, 3]),
+            from_json(List[int], [1, 2, 3]),
             [1, 2, 3],
         )
 
     def test_nested_list(self):
         self.assertEqual(
-            from_dict(
+            from_json(
                 List[Pose],
                 [
                     {"x": 1.0, "y": 2.0},
@@ -237,7 +237,7 @@ class TestFromDict(unittest.TestCase):
             TypeMismatchWarning,
             r"^\$: expected list, got dict$",
         ):
-            result = from_dict(List[int], {})
+            result = from_json(List[int], {})
 
         self.assertEqual(result, [])
 
@@ -246,7 +246,7 @@ class TestFromDict(unittest.TestCase):
             TypeMismatchWarning,
             r"^\$\[1\]: expected int, got str$",
         ):
-            result = from_dict(
+            result = from_json(
                 List[int],
                 [1, "bad", 3],
             )
@@ -255,7 +255,7 @@ class TestFromDict(unittest.TestCase):
 
     def test_dict(self):
         self.assertEqual(
-            from_dict(
+            from_json(
                 Dict[str, int],
                 {"a": 1, "b": 2},
             ),
@@ -264,7 +264,7 @@ class TestFromDict(unittest.TestCase):
 
     def test_nested_dict(self):
         self.assertEqual(
-            from_dict(
+            from_json(
                 Dict[str, Pose],
                 {
                     "first": {"x": 1.0, "y": 2.0},
@@ -282,7 +282,7 @@ class TestFromDict(unittest.TestCase):
             TypeMismatchWarning,
             r"^\$\['a'\]: expected float, got str$",
         ):
-            result = from_dict(
+            result = from_json(
                 Dict[str, float],
                 {
                     "a": "bad",
@@ -303,7 +303,7 @@ class TestFromDict(unittest.TestCase):
             TypeMismatchWarning,
             r"^\$: expected 'a' \| 'b', got 'c'$",
         ):
-            result = from_dict(
+            result = from_json(
                 Literal["a", "b"],
                 "c",
             )
@@ -317,7 +317,7 @@ class TestFromDict(unittest.TestCase):
             TypeMismatchWarning,
             r"^\$: expected 'c', got 'd'$",
         ):
-            result = from_dict(
+            result = from_json(
                 Literal["c"],
                 "d",
             )
@@ -332,13 +332,13 @@ class TestFromDict(unittest.TestCase):
             TypeMismatchWarning,
             r"^\$: expected dict, got list$",
         ):
-            result = from_dict(Dict[str, int], [])
+            result = from_json(Dict[str, int], [])
 
         self.assertEqual(result, {})
 
     def test_mapping(self):
         self.assertEqual(
-            from_dict(
+            from_json(
                 Mapping[str, int],
                 {"a": 1, "b": 2},
             ),
@@ -347,7 +347,7 @@ class TestFromDict(unittest.TestCase):
 
     def test_complex_structure(self):
         with patch("warnings.warn") as warn:
-            result = from_dict(
+            result = from_json(
                 Config,
                 {
                     "name": "test",
