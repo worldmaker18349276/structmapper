@@ -317,7 +317,7 @@ def type_check_json(schema: Dict[Any, Any], schema_path: Path, data: JSON, *, pa
     """
 
     # {} == Any
-    if not schema:
+    if schema.get("type") is None:
         return True
 
     # ExternalType[...] - validated against a schema defined elsewhere
