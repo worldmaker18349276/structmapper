@@ -91,7 +91,7 @@ def _inject_into_mro_modules(cls: Type[Any], name: str, value: Any):
     Temporarily inject `name = value` into the real __dict__ of every
     module referenced by cls.__mro__, so native get_type_hints (which
     uses sys.modules[base.__module__].__dict__ per base when globalns=None)
-    can resolve `name` during eval — then restore each module exactly
+    can resolve `name` during eval - then restore each module exactly
     as it was.
     """
     touched: List[Tuple[ModuleType, bool, Any]] = []  # (module, name, had_key, old_value)
@@ -123,10 +123,9 @@ def from_json(cls: Union[type, Any], data: JSON, *, path: str = "$", check_exter
     `cls` can be:
     - dataclass with valid type hints for from_json, it must be default constructable.
     - JSON type: NoneType, bool, int, float, str, List[T], Dict[str, T]
-    - schema type: ExternalType[Literal['path/to/your.schema.json']]
-    - variable-size tuple: Tuple[T, ...]
-    - fixed-size tuple: Tuple[T, T, T]
+    - immutable tuple: Tuple[T, ...]
     - string enum: Literal['option1', 'option2', 'option3']
+    - schema type: ExternalType[Literal['path/to/your.schema.json']]
     - Any
     where T is valid type hint for `from_json`.
     
@@ -192,19 +191,6 @@ def from_json(cls: Union[type, Any], data: JSON, *, path: str = "$", check_exter
         for i, v in enumerate(data):
             arr.append(from_json(element_type, v, path=f"{path}[{i}]", check_external=check_external))
         return tuple(arr) if origin in (tuple, Tuple) else arr
-
-    # Tuple[T, T, T], elements should be the same type
-    if origin in (tuple, Tuple) and len(set(args)) == 1:
-        arr: List[Any] = []
-        if not isinstance(data, list) or len(data) != len(args):
-            warnings.warn(TypeMismatchWarning(path, f"{len(args)}-tuple", type(data).__name__))
-            return arr
-
-        element_type = args[0] if args else Any
-
-        for i in range(len(args)):
-            arr.append(from_json(element_type, data[i], path=f"{path}[{i}]", check_external=check_external))
-        return tuple(arr)
 
     # Dict[K, V]
     if origin in (dict, Dict, Mapping):
@@ -305,19 +291,6 @@ def type_check(cls: Union[type, Any], data: Any, *, path: str = "$", check_exter
                 ok = False
         return ok
 
-    if origin in (tuple, Tuple) and len(set(args)) == 1:
-        if not isinstance(data, list) or len(cast(List[Any], data)) != len(args):
-            warnings.warn(ClassMismatchWarning(path, tuple, data_class))
-            return False
-
-        element_type = args[0] if args else Any
-
-        ok = True
-        for i in range(len(args)):
-            if not type_check(element_type, data[i], path=f"{path}[{i}]", check_external=check_external):
-                ok = False
-        return ok
-
     if origin in (dict, Dict, Mapping):
         if not isinstance(data, dict):
             warnings.warn(ClassMismatchWarning(path, dict, data_class))
@@ -341,18 +314,6 @@ def type_check(cls: Union[type, Any], data: Any, *, path: str = "$", check_exter
 def type_check_json(schema: Dict[Any, Any], schema_path: Path, data: JSON, *, path: str = "$") -> bool:
     """Validate `data` against a JSON schema dict, but only the shapes
     that `to_schema` actually produces.
-    Recognized forms:
-
-        {}                                                    -> Any
-        {"type": "null"}                                      -> NoneType
-        {"type": "boolean" | "integer" | "number" | "string"} -> scalar
-        {"type": "object", "properties": {...}}               -> dataclass
-        {"type": "object", "additionalProperties": {...}}     -> Dict[str, V]
-        {"type": "array", "items": {...}}                     -> List[T]
-        {"$ref": "..."}                                       -> ExternalType[...], opaque
-        {"anyOf": [{...}]}                                    -> wrapped type
-        {"enum": [...]}                                       -> enumerated values
-        {"const": ...}                                        -> constant values
     """
 
     # {} == Any
@@ -448,7 +409,6 @@ def to_schema(cls: Union[type, Any]) -> Dict[str, JSON]:
         dataclass                 -> {"type": "object", "properties": {...}}
         Dict[str, V]              -> {"type": "object", "additionalProperties": {...}}
         List[T], Tuple[T, ...]    -> {"type": "array", "items": {...}}
-        Tuple[T, T, T]            -> {"type": "array", "items": {...}}, no minItems/maxItems
         ExternalType[...]         -> {"$ref": "..."}
         Literal["...", ...]       -> {"enum": [...]}
         Literal["..."]            -> {"const": ...}
@@ -493,14 +453,6 @@ def to_schema(cls: Union[type, Any]) -> Dict[str, JSON]:
             return {"enum": [value for value in args]}
 
     if origin in (list, List) or origin in (tuple, Tuple) and len(args) == 2 and args[-1] == (Ellipsis,):
-        schema = {
-            "type": "array",
-            "items": to_schema(args[0] if len(args) == 1 else Any)
-        }
-        return schema
-
-    if origin in (tuple, Tuple) and len(set(args)) == 1:
-        # ignore length of tuple
         schema = {
             "type": "array",
             "items": to_schema(args[0] if len(args) == 1 else Any)
