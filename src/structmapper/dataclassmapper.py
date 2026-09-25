@@ -399,36 +399,50 @@ def type_check_json(schema: Dict[Any, Any], schema_path: Path, data: JSON, *, pa
 
     raise TypeError(f"unrecognized schema: {schema!r}")
 
-def to_schema(cls: Union[type, Any]) -> Dict[str, JSON]:
-    """
-    convert type hints (valid for `from_json`) to JSON schema.
-    
-        Any                       -> {}
-        NoneType                  -> {"type": "null"}
-        scalar                    -> {"type": "boolean" | "integer" | "number" | "string"}
-        dataclass                 -> {"type": "object", "properties": {...}}
-        Dict[str, V]              -> {"type": "object", "additionalProperties": {...}}
-        List[T], Tuple[T, ...]    -> {"type": "array", "items": {...}}
-        ExternalType[...]         -> {"$ref": "..."}
-        Literal["...", ...]       -> {"enum": [...]}
-        Literal["..."]            -> {"const": ...}
-    
-    description of dataclass will be appended if exists.
-
-    """
+def _count_type(cls: Any, counts: Dict[type, int], refs: Dict[type, str]) -> None:
     origin = get_origin(cls)
     args = get_args(cls)
 
-    schema: Dict[str, Any] = {}
+    if isinstance(cls, type) and is_dataclass(cls):
+        if cls in refs: return
+        counts[cls] = counts.get(cls, 0) + 1
+        if counts[cls] >= 2: return # already visited
+
+        # Still traverse it for counting nested types.
+        hints = _get_type_hints(cls)
+        for f in fields(cls):
+            _count_type(hints.get(f.name, f.type), counts, refs)
+        return
+
+    if origin in (list, List) or origin in (tuple, Tuple) and len(args) == 2 and args[1] is Ellipsis:
+        _count_type(args[0] if len(args) == 1 else Any, counts, refs)
+        return
+
+    if origin in (dict, Dict, Mapping):
+        assert len(args) == 0 or len(args) == 2 and args[0] is str
+        _count_type(args[1] if len(args) == 2 else Any, counts, refs)
+        return
+
+    # Any, scalars, Literals, External types, etc.
+    return
+
+def _make_schema(cls: Any, defs_root: bool, refs: Dict[type, str]) -> Dict[str, JSON]:
+    origin = get_origin(cls)
+    args = get_args(cls)
+
+    schema: Dict[str, JSON] = {}
 
     if cls is Any:
         return schema
 
     if isinstance(cls, type) and is_dataclass(cls):
+        if not defs_root and cls in refs:
+            return {"$ref": refs[cls]}
+
         hints = _get_type_hints(cls)
-        properties = {}
+        properties: Dict[str, JSON] = {}
         for f in fields(cls):
-            field_schema = to_schema(hints.get(f.name, f.type))
+            field_schema = _make_schema(hints.get(f.name, f.type), False, refs)
             if f.default is not MISSING:
                 field_schema = cast(Dict[str, JSON], {**field_schema, "default": f.default})
             properties[f.name] = field_schema
@@ -455,15 +469,15 @@ def to_schema(cls: Union[type, Any]) -> Dict[str, JSON]:
     if origin in (list, List) or origin in (tuple, Tuple) and len(args) == 2 and args[-1] == (Ellipsis,):
         schema = {
             "type": "array",
-            "items": to_schema(args[0] if len(args) == 1 else Any)
+            "items": _make_schema(args[0] if len(args) == 1 else Any, False, refs)
         }
         return schema
 
     if origin in (dict, Dict, Mapping):
-        assert len(args) == 0 or args[0] is str
+        assert len(args) == 0 or len(args) == 2 and args[0] is str
         schema = {
             "type": "object",
-            "additionalProperties": to_schema(args[1] if len(args) == 2 else Any)
+            "additionalProperties": _make_schema(args[1] if len(args) == 2 else Any, False, refs)
         }
         return schema
 
@@ -478,3 +492,45 @@ def to_schema(cls: Union[type, Any]) -> Dict[str, JSON]:
         return dict(SCALAR_SCHEMA[cls])
 
     raise TypeError(f"unknown type {cls} ({origin})")
+
+def _choose_unique_defs_name(cls: type, defs_: Dict[str, type]) -> str:
+    name = cls.__name__
+    if name in defs_.keys():
+        i = 2
+        while (candidate := f"{name}_{i}") in defs_.keys():
+            i += 1
+        name = candidate
+    return name
+
+def to_schema(cls: Union[type, Any], refs: Dict[type, str]) -> Dict[str, JSON]:
+    """
+    convert type hints (valid for `from_json`) to JSON schema.
+    
+        Any                       -> {}
+        NoneType                  -> {"type": "null"}
+        scalar                    -> {"type": "boolean" | "integer" | "number" | "string"}
+        dataclass                 -> {"type": "object", "properties": {...}}
+        Dict[str, V]              -> {"type": "object", "additionalProperties": {...}}
+        List[T], Tuple[T, ...]    -> {"type": "array", "items": {...}}
+        ExternalType[...]         -> {"$ref": "..."}
+        Literal["...", ...]       -> {"enum": [...]}
+        Literal["..."]            -> {"const": ...}
+    
+    description of dataclass will be appended if exists.
+
+    """
+    counts: Dict[type, int] = {}
+    _count_type(cls, counts, refs)
+    refs = dict(refs)
+    defs_: Dict[str, type] = {}
+    for typ, count in counts.items():
+        if count >= 2 and typ not in refs:
+            name = _choose_unique_defs_name(typ, defs_)
+            defs_[name] = typ
+            refs[typ] = f"#/$defs/{name}"
+    defs: Dict[str, JSON] = {}
+    for name, typ in defs_.items():
+        defs[name] = _make_schema(typ, True, refs)
+    root = _make_schema(cls, False, refs)
+    root["$defs"] = defs
+    return root
