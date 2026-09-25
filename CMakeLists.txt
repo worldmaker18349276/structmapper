@@ -22,6 +22,8 @@ include_directories(
   ${catkin_INCLUDE_DIRS}
 )
 
+include(cmake/StructMapperSchema.cmake)
+
 install(DIRECTORY include/${PROJECT_NAME}/
   DESTINATION ${CATKIN_PACKAGE_INCLUDE_DESTINATION}
   FILES_MATCHING PATTERN "*.hpp"
