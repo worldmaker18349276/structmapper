@@ -55,6 +55,13 @@ namespace structmapper {
             static constexpr bool is_scalar = true;
         };
 
+        // any
+        template <>
+        struct SchemaTraits<nlohmann::json> {
+            static nlohmann::json get() { return nlohmann::json::object(); }
+            static constexpr bool is_scalar = false;
+        };
+
         // string enum
         template <typename... Strings>
         struct SchemaTraits<::strenum::StringEnum<Strings...>> {

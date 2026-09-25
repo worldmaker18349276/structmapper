@@ -59,6 +59,7 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <nlohmann/json.hpp>
 #include "structmapper/strenum.hpp"
 
 namespace structmapper {
@@ -155,6 +156,7 @@ namespace structmapper {
             std::is_same<T, bool>::value ||
             std::is_arithmetic<T>::value ||
             std::is_same<T, std::string>::value ||
+            std::is_same<T, nlohmann::json>::value ||
             is_string_enum<T>::value ||
             is_compile_time_string<T>::value ||
             ::structmapper::is_reflectable<T>::value

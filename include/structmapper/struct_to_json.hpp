@@ -124,56 +124,67 @@ namespace structmapper {
     // Writing: T -> json (always succeeds, nothing to log)
     // ---------------------------------------------------------------------
     namespace detail {
+        template <typename T>
+        void to_json(const T& v, json& j);
 
-        inline void to_json(bool v, json& j) { j = v; }
-        inline void to_json(const std::string& v, json& j) { j = v; }
-        inline void to_json(const char* v, json& j) { j = v; }
+        void to_json(const json& v, json& j, std::true_type) {
+            j = v;
+        }
+
+        inline void to_json(bool v, json& j, std::false_type) { j = v; }
+        inline void to_json(const std::string& v, json& j, std::false_type) { j = v; }
+        inline void to_json(const char* v, json& j, std::false_type) { j = v; }
 
         template <typename... Strings>
-        inline void to_json(typename ::strenum::StringEnum<Strings...>& v, json& j) { j = v.c_str(); }
+        inline void to_json(typename ::strenum::StringEnum<Strings...>& v, json& j, std::false_type) { j = v.c_str(); }
 
         template <char... Cs>
-        inline void to_json(typename ::CompileTimeString<Cs...>& v, json& j) { j = ::CompileTimeString<Cs...>::c_str(); }
+        inline void to_json(typename ::CompileTimeString<Cs...>& v, json& j, std::false_type) { j = ::CompileTimeString<Cs...>::c_str(); }
 
         template <typename T>
         typename std::enable_if<std::is_arithmetic<T>::value && !std::is_same<T, bool>::value>::type
-        to_json(const T& v, json& j);
+        to_json(const T& v, json& j, std::false_type);
 
         template <typename T>
-        void to_json(const std::vector<T>& v, json& j);
+        void to_json(const std::vector<T>& v, json& j, std::false_type);
 
         template <typename V>
-        void to_json(const std::map<std::string, V>& m, json& j);
+        void to_json(const std::map<std::string, V>& m, json& j, std::false_type);
 
         template <typename T>
         typename std::enable_if<is_reflectable<T>::value>::type
-        to_json(const T& obj, json& j);
+        to_json(const T& obj, json& j, std::false_type);
 
         template <typename T>
         typename std::enable_if<std::is_arithmetic<T>::value && !std::is_same<T, bool>::value>::type
-        to_json(const T& v, json& j) { j = v; }
+        to_json(const T& v, json& j, std::false_type) { j = v; }
 
         template <typename T>
-        void to_json(const std::vector<T>& v, json& j) {
+        void to_json(const std::vector<T>& v, json& j, std::false_type) {
             j = json::array();
             for (const auto& e : v) { json ej; ::structmapper::detail::to_json(e, ej); j.push_back(std::move(ej)); }
         }
 
         template <typename V>
-        void to_json(const std::map<std::string, V>& m, json& j) {
+        void to_json(const std::map<std::string, V>& m, json& j, std::false_type) {
             j = json::object();
             for (const auto& kv : m) { json vj; ::structmapper::detail::to_json(kv.second, vj); j[kv.first] = std::move(vj); }
         }
 
         template <typename T>
         typename std::enable_if<is_reflectable<T>::value>::type
-        to_json(const T& obj, json& j) {
+        to_json(const T& obj, json& j, std::false_type) {
             j = json::object();
             visit_struct(obj, [&](const char* name, const auto& value, const char* /*desc*/) {
                 json vj;
                 ::structmapper::detail::to_json(value, vj);
                 j[name] = std::move(vj);
             });
+        }
+
+        template <typename T>
+        void to_json(const T& v, json& j) {
+            to_json(v, j, std::is_same<typename std::decay<T>::type, json>{});
         }
     } // namespace detail
 
@@ -190,6 +201,12 @@ namespace structmapper {
     // (type mismatch - caller logs and leaves the target untouched).
     // ---------------------------------------------------------------------
     namespace detail {
+
+        inline bool from_json(json& out, const json& j, const std::string& path, FromJsonLogger& logger) {
+            out = j;
+            logger(FromJsonLoadLog(path, j));
+            return true;
+        }
 
         // bool
         inline bool from_json(bool& out, const json& j, const std::string& path, FromJsonLogger& logger) {
