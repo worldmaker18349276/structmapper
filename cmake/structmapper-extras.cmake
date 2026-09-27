@@ -150,8 +150,7 @@ set(STRUCTMAPPER_PY_PACKAGE_DIR
 #                                          # (rebuild-on-change) -- never passed to
 #                                          # the interpreter directly.
 #     [OUTPUT       <path/to/output_dir>]
-#     [PYTHON_PATH  <dir> ...]             # Defaults to CMAKE_CURRENT_SOURCE_DIR/src
-#                                          # if omitted entirely.
+#     [PYTHON_PATH  <dir> ...]
 #     [PYTHON_EXECUTABLE <path>]
 # )
 function(structmapper_generate_python_schemas)
@@ -197,43 +196,7 @@ function(structmapper_generate_python_schemas)
             "extensions built for the target.")
     endif()
 
-    set(_pythonpath "")
-    if(EXISTS "${STRUCTMAPPER_PY_PACKAGE_DIR}/structmapper")
-        list(APPEND _pythonpath "${STRUCTMAPPER_PY_PACKAGE_DIR}")
-    elseif(NOT Python3_SITELIB OR NOT EXISTS "${Python3_SITELIB}/structmapper")
-        message(WARNING
-            "structmapper_generate_python_schemas(${SMPS_TARGET}): could not find a "
-            "'structmapper' package under STRUCTMAPPER_PY_PACKAGE_DIR "
-            "('${STRUCTMAPPER_PY_PACKAGE_DIR}') or in ${SMPS_PYTHON_EXECUTABLE}'s site-packages. "
-            "The generator will likely fail with 'ModuleNotFoundError: structmapper'. "
-            "Set STRUCTMAPPER_PY_PACKAGE_DIR to the directory containing the 'structmapper' "
-            "package, or pip-install it into that interpreter.")
-    endif()
-    list(APPEND _pythonpath ${SMPS_PYTHON_PATH})
-    if(_pythonpath)
-        list(REMOVE_DUPLICATES _pythonpath)
-    endif()
-
-    if(WIN32)
-        set(_path_sep ";")
-    else()
-        set(_path_sep ":")
-    endif()
-    set(_pythonpath_joined "${_pythonpath}")
-    if(_pythonpath_joined)
-        string(REPLACE ";" "${_path_sep}" _pythonpath_joined "${_pythonpath_joined}")
-    endif()
-    # Extend the ambient PYTHONPATH (e.g. from a sourced devel/setup.bash)
-    # rather than replacing it -- our entries take precedence, but anything
-    # the environment already provides (like catkin_python_setup()'s
-    # PYTHON_INSTALL_DIR forwarding) still applies as a fallback.
-    if(DEFINED ENV{PYTHONPATH} AND NOT "$ENV{PYTHONPATH}" STREQUAL "")
-        if(_pythonpath_joined)
-            set(_pythonpath_joined "${_pythonpath_joined}${_path_sep}$ENV{PYTHONPATH}")
-        else()
-            set(_pythonpath_joined "$ENV{PYTHONPATH}")
-        endif()
-    endif()
+    set(_pythonpath "${SMPS_PYTHON_PATH}:${CATKIN_DEVEL_PREFIX}/${PYTHON_INSTALL_DIR}:$ENV{PYTHONPATH}")
 
     # --type <spec> repeated once per entry in TYPES.
     set(_type_args "")
@@ -245,7 +208,7 @@ function(structmapper_generate_python_schemas)
     add_custom_command(
         OUTPUT  ${_stamp}
         COMMAND ${CMAKE_COMMAND} -E make_directory "${SMPS_OUTPUT}"
-        COMMAND ${CMAKE_COMMAND} -E env "PYTHONPATH=${_pythonpath_joined}"
+        COMMAND ${CMAKE_COMMAND} -E env "PYTHONPATH=${_pythonpath}"
                 ${SMPS_PYTHON_EXECUTABLE} "${STRUCTMAPPER_PY_SCHEMA_GENERATOR}"
                 --output "${SMPS_OUTPUT}"
                 ${_type_args}
@@ -255,6 +218,5 @@ function(structmapper_generate_python_schemas)
         VERBATIM
     )
     add_custom_target(${SMPS_TARGET} ALL DEPENDS "${_stamp}")
-    set_target_properties(${SMPS_TARGET} PROPERTIES STRUCTMAPPER_PYTHONPATH "${_pythonpath}")
     set(${SMPS_TARGET}_SCHEMA_OUTPUT "${SMPS_OUTPUT}" PARENT_SCOPE)
 endfunction()

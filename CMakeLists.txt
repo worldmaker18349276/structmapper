@@ -14,6 +14,7 @@ catkin_package(
   INCLUDE_DIRS include
   CATKIN_DEPENDS roscpp
   DEPENDS nlohmann_json
+  CFG_EXTRAS structmapper-extras.cmake
 )
 
 include_directories(
@@ -21,8 +22,6 @@ include_directories(
   ${nlohmann_json_INCLUDE_DIRS}
   ${catkin_INCLUDE_DIRS}
 )
-
-include(cmake/StructMapperSchema.cmake)
 
 install(DIRECTORY include/${PROJECT_NAME}/
   DESTINATION ${CATKIN_PACKAGE_INCLUDE_DESTINATION}
