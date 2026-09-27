@@ -5,6 +5,9 @@ set(STRUCTMAPPER_CMAKE_MODULE_DIR "${CMAKE_CURRENT_LIST_DIR}" CACHE INTERNAL "")
 # Needed by structmapper_generate_python_schemas() below.
 find_package(Python3 QUIET COMPONENTS Interpreter)
 
+set(STRUCTMAPPER_PY_SCHEMA_GENERATOR
+    "${STRUCTMAPPER_CMAKE_MODULE_DIR}/schema_generator.py" CACHE FILEPATH "")
+
 # structmapper_generate_schemas(
 #     TARGET       <name>
 #     TYPES        <FullyQualified::Type> ...
@@ -35,7 +38,7 @@ function(structmapper_generate_schemas)
         message(FATAL_ERROR "structmapper_generate_schemas: HEADERS is required")
     endif()
     if(NOT SMS_OUTPUT)
-        set(SMS_OUTPUT "${CATKIN_DEVEL_PREFIX}/${CATKIN_PACKAGE_SHARE_DESTINATION}/structmapper_schema")
+        set(SMS_OUTPUT "${CATKIN_DEVEL_PREFIX}/${CATKIN_PACKAGE_SHARE_DESTINATION}/structmapper_schema/cpp")
     endif()
     foreach(_h IN LISTS SMS_HEADERS)
         if(NOT EXISTS "${_h}")
@@ -134,13 +137,6 @@ function(structmapper_generate_schemas)
     add_custom_target(${SMS_TARGET} ALL DEPENDS "${_stamp}")
     set(${SMS_TARGET}_SCHEMA_OUTPUT "${SMS_OUTPUT}" PARENT_SCOPE)
 endfunction()
-
-set(STRUCTMAPPER_PY_SCHEMA_GENERATOR
-    "${STRUCTMAPPER_CMAKE_MODULE_DIR}/schema_generator.py" CACHE FILEPATH "")
-
-set(STRUCTMAPPER_PY_PACKAGE_DIR
-    "${STRUCTMAPPER_CMAKE_MODULE_DIR}/../src" CACHE PATH
-    "Directory containing the importable 'structmapper' package")
 
 # structmapper_generate_python_schemas(
 #     TARGET       <name>
