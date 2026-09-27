@@ -122,7 +122,7 @@ function(structmapper_generate_schemas)
         set(_run_cmd ${CMAKE_CROSSCOMPILING_EMULATOR} $<TARGET_FILE:${_gen_exe}>)
     endif()
 
-    set(_stamp "${CMAKE_CURRENT_BINARY_DIR}/${SMS_TARGET}.stamp")
+    set(_stamp "${SMS_OUTPUT}/manifest.json")
     add_custom_command(
         OUTPUT "${_stamp}"
         COMMAND ${CMAKE_COMMAND} -E make_directory "${SMS_OUTPUT}"
@@ -204,7 +204,7 @@ function(structmapper_generate_python_schemas)
         list(APPEND _type_args "--type" "${_t}")
     endforeach()
 
-    set(_stamp "${CMAKE_CURRENT_BINARY_DIR}/${SMPS_TARGET}.stamp")
+    set(_stamp "${SMS_OUTPUT}/manifest.json")
     add_custom_command(
         OUTPUT  ${_stamp}
         COMMAND ${CMAKE_COMMAND} -E make_directory "${SMPS_OUTPUT}"
@@ -212,7 +212,6 @@ function(structmapper_generate_python_schemas)
                 ${SMPS_PYTHON_EXECUTABLE} "${STRUCTMAPPER_PY_SCHEMA_GENERATOR}"
                 --output "${SMPS_OUTPUT}"
                 ${_type_args}
-        COMMAND ${CMAKE_COMMAND} -E touch ${_stamp}
         DEPENDS "${STRUCTMAPPER_PY_SCHEMA_GENERATOR}" ${SMPS_SOURCES}
         COMMENT "structmapper: generating python schemas for package ${PROJECT_NAME}"
         VERBATIM
