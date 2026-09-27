@@ -62,6 +62,34 @@ namespace structmapper {
         std::map<std::type_index, std::string>& def_names;      // type -> its (unique) $defs key, once assigned
     };
 
+    inline std::string sanitize_identifier(const std::string& raw) {
+        std::string out;
+        out.reserve(raw.size());
+        for (char c : raw) {
+            out.push_back((std::isalnum(static_cast<unsigned char>(c)) || c == '_') ? c : '_');
+        }
+        if (out.empty() || std::isdigit(static_cast<unsigned char>(out[0]))) {
+            out = "T_" + out;
+        }
+        return out;
+    }
+
+    // Best-effort human-readable name for a reflectable type. This
+    // demangles typeid(T).name().
+    template <typename T>
+    std::string demangled_type_name() {
+        std::string name;
+        #if defined(__GNUG__)
+            int status = 0;
+            std::unique_ptr<char, void (*)(void*)> demangled(
+                abi::__cxa_demangle(typeid(T).name(), nullptr, nullptr, &status), std::free);
+            name = (status == 0 && demangled) ? demangled.get() : typeid(T).name();
+        #else
+            name = typeid(T).name();
+        #endif
+        return name;
+    }
+
     namespace detail {
 
         template <typename T, typename Enable = void>
@@ -119,22 +147,6 @@ namespace structmapper {
             static constexpr bool is_scalar = true;
         };
 
-        // Best-effort human-readable name for a reflectable type. This
-        // demangles typeid(T).name().
-        template <typename T>
-        std::string demangled_type_name() {
-            std::string name;
-#if defined(__GNUG__)
-            int status = 0;
-            std::unique_ptr<char, void (*)(void*)> demangled(
-                abi::__cxa_demangle(typeid(T).name(), nullptr, nullptr, &status), std::free);
-            name = (status == 0 && demangled) ? demangled.get() : typeid(T).name();
-#else
-            name = typeid(T).name();
-#endif
-            return name;
-        }
-
         // Short form: just the last "::"-separated segment, e.g. "Foo" for
         // "ns::inner::Foo". This is what's tried first as a $defs key.
         template <typename T>
@@ -142,23 +154,6 @@ namespace structmapper {
             std::string name = demangled_type_name<T>();
             auto pos = name.find_last_of(':');
             return pos == std::string::npos ? name : name.substr(pos + 1);
-        }
-
-        // A $defs key (and $ref fragment) has to be usable as a plain JSON
-        // object key / URI fragment, so anything that isn't alphanumeric or
-        // '_' - "::", template "<...>", etc. - is folded to '_'. Leading
-        // digits also get a "T_" prefix so the result stays a reasonable
-        // identifier.
-        inline std::string sanitize_defs_name(const std::string& raw) {
-            std::string out;
-            out.reserve(raw.size());
-            for (char c : raw) {
-                out.push_back((std::isalnum(static_cast<unsigned char>(c)) || c == '_') ? c : '_');
-            }
-            if (out.empty() || std::isdigit(static_cast<unsigned char>(out[0]))) {
-                out = "T_" + out;
-            }
-            return out;
         }
 
         // Picks a $defs key for T that isn't already taken by some *other*
@@ -171,10 +166,10 @@ namespace structmapper {
             std::set<std::string> used;
             for (const auto& kv : def_names) used.insert(kv.second);
 
-            std::string short_name = sanitize_defs_name(type_defs_name<T>());
+            std::string short_name = sanitize_identifier(type_defs_name<T>());
             if (!used.count(short_name)) return short_name;
 
-            std::string qualified = sanitize_defs_name(demangled_type_name<T>());
+            std::string qualified = sanitize_identifier(demangled_type_name<T>());
             if (!used.count(qualified)) return qualified;
 
             for (int i = 2;; ++i) {

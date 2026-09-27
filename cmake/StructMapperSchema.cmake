@@ -2,11 +2,11 @@ include_guard(GLOBAL)
 
 set(STRUCTMAPPER_CMAKE_MODULE_DIR "${CMAKE_CURRENT_LIST_DIR}" CACHE INTERNAL "")
 
-# structmapper_generate_schema(
-#     TARGET        <name>
-#     CLASS_TYPE    <Fully::Qualified::Type>
-#     HEADER        <path/to/type.hpp>
-#     [OUTPUT       <path/to/out.json>]
+# structmapper_generate_schemas(
+#     TARGET       <name>
+#     TYPES        <FullyQualified::Type> ...
+#     HEADERS      <path> ...
+#     [OUTPUT      <path/to/output_dir>]
 #     [LIKE_TARGET  <existing_target>]   # reuse this target's include dirs /
 #                                        # link libs / compile features
 #                                        # instead of re-specifying them.
@@ -14,50 +14,67 @@ set(STRUCTMAPPER_CMAKE_MODULE_DIR "${CMAKE_CURRENT_LIST_DIR}" CACHE INTERNAL "")
 #                                        # target_link_libraries()/
 #                                        # target_include_directories() calls
 #                                        # made *before* this call.
-#     [INCLUDE_DIRS <dir> ...]          # extra, on top of LIKE_TARGET if given
-#     [LINK_LIBRARIES <lib> ...]        # extra, on top of LIKE_TARGET if given
+#     [INCLUDE_DIRS <dir> ...]           # extra, on top of LIKE_TARGET if given
+#     [LINK_LIBRARIES <lib> ...]         # extra, on top of LIKE_TARGET if given
 # )
-function(structmapper_generate_schema)
-    set(oneValueArgs TARGET CLASS_TYPE HEADER OUTPUT LIKE_TARGET)
-    set(multiValueArgs INCLUDE_DIRS LINK_LIBRARIES)
+function(structmapper_generate_schemas)
+    set(oneValueArgs TARGET OUTPUT LIKE_TARGET)
+    set(multiValueArgs TYPES HEADERS INCLUDE_DIRS LINK_LIBRARIES)
     cmake_parse_arguments(SMS "" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
 
     if(NOT SMS_TARGET)
-        message(FATAL_ERROR "structmapper_generate_schema: TARGET is required")
+        message(FATAL_ERROR "structmapper_generate_schemas: TARGET is required")
     endif()
-    if(NOT SMS_CLASS_TYPE)
-        message(FATAL_ERROR "structmapper_generate_schema: CLASS_TYPE is required")
+    if(NOT SMS_TYPES)
+        message(FATAL_ERROR "structmapper_generate_schemas: TYPES is required")
     endif()
-    if(NOT SMS_HEADER)
-        message(FATAL_ERROR "structmapper_generate_schema: HEADER is required")
-    endif()
-    if(NOT EXISTS "${SMS_HEADER}")
-        message(FATAL_ERROR "structmapper_generate_schema: HEADER '${SMS_HEADER}' does not exist")
+    if(NOT SMS_HEADERS)
+        message(FATAL_ERROR "structmapper_generate_schemas: HEADERS is required")
     endif()
     if(NOT SMS_OUTPUT)
-        set(SMS_OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/${SMS_TARGET}.json")
+        set(SMS_OUTPUT "${CATKIN_DEVEL_PREFIX}/${CATKIN_PACKAGE_SHARE_DESTINATION}/structmapper_schema")
     endif()
+    foreach(_h IN LISTS SMS_HEADERS)
+        if(NOT EXISTS "${_h}")
+            message(FATAL_ERROR "structmapper_generate_schemas: header '${_h}' does not exist")
+        endif()
+    endforeach()
     if(SMS_LIKE_TARGET AND NOT TARGET ${SMS_LIKE_TARGET})
         message(FATAL_ERROR
-            "structmapper_generate_schema: LIKE_TARGET '${SMS_LIKE_TARGET}' is not "
-            "a target. Call structmapper_generate_schema() AFTER that target's own "
-            "add_executable()/target_link_libraries()/target_include_directories() "
-            "calls, so its properties are populated.")
+            "structmapper_generate_schemas: LIKE_TARGET '${SMS_LIKE_TARGET}' is not a target. "
+            "Call this after that target's own add_executable()/target_link_libraries() calls.")
     endif()
-
     if(CMAKE_CROSSCOMPILING AND NOT CMAKE_CROSSCOMPILING_EMULATOR)
         message(WARNING
-            "structmapper_generate_schema(${SMS_TARGET}): cross-compiling without "
-            "CMAKE_CROSSCOMPILING_EMULATOR set; the generator exe won't run on the "
-            "host at build time.")
+            "structmapper_generate_schemas(${SMS_TARGET}): cross-compiling without "
+            "CMAKE_CROSSCOMPILING_EMULATOR set; the generator will not run at build time.")
     endif()
 
-    set(_gen_dir "${CMAKE_CURRENT_BINARY_DIR}/structmapper_generated")
-    file(MAKE_DIRECTORY "${_gen_dir}")
-    set(_gen_src "${_gen_dir}/${SMS_TARGET}_gen.cpp")
+    set(_headers_dedup "${SMS_HEADERS}")
+    list(REMOVE_DUPLICATES _headers_dedup)
 
-    set(STRUCTMAPPER_GEN_HEADER "${SMS_HEADER}")
-    set(STRUCTMAPPER_GEN_CLASS_TYPE "${SMS_CLASS_TYPE}")
+    set(_includes "")
+    foreach(_h IN LISTS _headers_dedup)
+        string(APPEND _includes "#include \"${_h}\"\n")
+    endforeach()
+
+    # Comma-joined type list, passed straight through as template arguments
+    # to structmapper::generate_schemas<Types...>().
+    set(_types_list "")
+    set(_first TRUE)
+    foreach(_t IN LISTS SMS_TYPES)
+        if(_first)
+            set(_types_list "${_t}")
+            set(_first FALSE)
+        else()
+            set(_types_list "${_types_list}, ${_t}")
+        endif()
+    endforeach()
+
+    set(STRUCTMAPPER_GEN_INCLUDES "${_includes}")
+    set(STRUCTMAPPER_GEN_TYPES "${_types_list}")
+
+    set(_gen_src "${CMAKE_CURRENT_BINARY_DIR}/structmapper_generated/${SMS_TARGET}_gen.cpp")
     configure_file(
         "${STRUCTMAPPER_CMAKE_MODULE_DIR}/templates/schema_gen.cpp.in"
         "${_gen_src}"
@@ -82,34 +99,35 @@ function(structmapper_generate_schema)
         target_compile_features(${_gen_exe} PRIVATE
             $<TARGET_PROPERTY:${SMS_LIKE_TARGET},COMPILE_FEATURES>)
     else()
-        target_include_directories(${_gen_exe} PRIVATE
-            ${catkin_INCLUDE_DIRS} ${structmapper_INCLUDE_DIRS})
+        target_include_directories(${_gen_exe} PRIVATE ${catkin_INCLUDE_DIRS})
     endif()
 
-    # Always allowed on top, LIKE_TARGET or not.
     if(SMS_INCLUDE_DIRS)
         target_include_directories(${_gen_exe} PRIVATE ${SMS_INCLUDE_DIRS})
     endif()
-    if(SMS_LIKE_TARGET)
+    if(SMS_LINK_LIBRARIES)
         target_link_libraries(${_gen_exe} PRIVATE ${SMS_LINK_LIBRARIES})
     endif()
+
+    foreach(_h IN LISTS _headers_dedup)
+        get_filename_component(_hdir "${_h}" DIRECTORY)
+        target_include_directories(${_gen_exe} PRIVATE "${_hdir}")
+    endforeach()
 
     set(_run_cmd ${_gen_exe})
     if(CMAKE_CROSSCOMPILING_EMULATOR)
         set(_run_cmd ${CMAKE_CROSSCOMPILING_EMULATOR} $<TARGET_FILE:${_gen_exe}>)
     endif()
 
-    get_filename_component(_out_dir "${SMS_OUTPUT}" DIRECTORY)
-    file(MAKE_DIRECTORY "${_out_dir}")
-
+    set(_manifest "${SMS_OUTPUT}/manifest.json")
     add_custom_command(
-        OUTPUT "${SMS_OUTPUT}"
+        OUTPUT "${_manifest}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${SMS_OUTPUT}"
         COMMAND ${_run_cmd} "${SMS_OUTPUT}"
-        DEPENDS ${_gen_exe} "${SMS_HEADER}"
-        COMMENT "structmapper: generating schema for ${SMS_CLASS_TYPE} -> ${SMS_OUTPUT}"
+        DEPENDS ${_gen_exe} ${SMS_HEADERS}
+        COMMENT "structmapper: generating schemas for package ${PROJECT_NAME}"
         VERBATIM
     )
-
-    add_custom_target(${SMS_TARGET} ALL DEPENDS "${SMS_OUTPUT}")
+    add_custom_target(${SMS_TARGET} ALL DEPENDS "${_manifest}")
     set(${SMS_TARGET}_SCHEMA_OUTPUT "${SMS_OUTPUT}" PARENT_SCOPE)
 endfunction()
