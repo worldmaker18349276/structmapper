@@ -180,7 +180,7 @@ def from_json(cls: Union[type, Any], data: JSON, *, path: str = "$", check_exter
         return data
 
     # List[T] or Tuple[T, ...]
-    if origin in (list, List) or origin in (tuple, Tuple) and len(args) == 2 and args[-1] == (Ellipsis,):
+    if origin in (list, List) or origin in (tuple, Tuple) and len(args) == 0 or origin in (tuple, Tuple) and len(args) == 2 and args[-1] is Ellipsis:
         arr: List[Any] = []
         if not isinstance(data, list):
             warnings.warn(TypeMismatchWarning(path, "list", type(data).__name__))
@@ -237,7 +237,7 @@ class FromJson:
         return cast(DataclassT, from_json(cls, data))
     @classmethod
     def to_schema(cls) -> JSON:
-        return to_schema(cls)
+        return to_schema(cls, {})
 
 def type_check(cls: Union[type, Any], data: Any, *, path: str = "$", check_external: bool = False) -> bool:
     """
@@ -280,7 +280,7 @@ def type_check(cls: Union[type, Any], data: Any, *, path: str = "$", check_exter
             return False
         return True
 
-    if origin in (list, List) or origin in (tuple, Tuple) and len(args) == 2 and args[-1] == (Ellipsis,):
+    if origin in (list, List) or origin in (tuple, Tuple) and len(args) == 0 or origin in (tuple, Tuple) and len(args) == 2 and args[-1] is Ellipsis:
         if not isinstance(data, list):
             warnings.warn(ClassMismatchWarning(path, list, data_class))
             return False
@@ -414,7 +414,7 @@ def _count_type(cls: Any, counts: Dict[type, int], refs: Dict[type, str]) -> Non
             _count_type(hints.get(f.name, f.type), counts, refs)
         return
 
-    if origin in (list, List) or origin in (tuple, Tuple) and len(args) == 2 and args[1] is Ellipsis:
+    if origin in (list, List) or origin in (tuple, Tuple) and len(args) == 0 or origin in (tuple, Tuple) and len(args) == 2 and args[1] is Ellipsis:
         _count_type(args[0] if len(args) == 1 else Any, counts, refs)
         return
 
@@ -466,7 +466,7 @@ def _make_schema(cls: Any, defs_root: bool, refs: Dict[type, str]) -> Dict[str, 
         else:
             return {"enum": [value for value in args]}
 
-    if origin in (list, List) or origin in (tuple, Tuple) and len(args) == 2 and args[-1] == (Ellipsis,):
+    if origin in (list, List) or origin in (tuple, Tuple) and len(args) == 0 or origin in (tuple, Tuple) and len(args) == 2 and args[-1] is Ellipsis:
         schema = {
             "type": "array",
             "items": _make_schema(args[0] if len(args) == 1 else Any, False, refs)
