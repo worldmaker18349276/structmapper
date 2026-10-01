@@ -10,6 +10,7 @@
 //   - arithmetic number as integer or number
 //   - std::string
 //   - std::vector<T> as array
+//   - std::array<T, N> as array
 //   - std::map<std::string, T> as object
 //   - reflectable struct as object
 // from_json/to_json will iterate through std::vector, std::map and
@@ -148,6 +149,9 @@ namespace structmapper {
         template <typename T>
         void to_json(const std::vector<T>& v, json& j, std::false_type);
 
+        template <typename T, size_t N>
+        void to_json(const std::array<T, N>& v, json& j, std::false_type);
+
         template <typename V>
         void to_json(const std::map<std::string, V>& m, json& j, std::false_type);
 
@@ -161,6 +165,12 @@ namespace structmapper {
 
         template <typename T>
         void to_json(const std::vector<T>& v, json& j, std::false_type) {
+            j = json::array();
+            for (const auto& e : v) { json ej; ::structmapper::detail::to_json(e, ej); j.push_back(std::move(ej)); }
+        }
+
+        template <typename T, size_t N>
+        void to_json(const std::array<T, N>& v, json& j, std::false_type) {
             j = json::array();
             for (const auto& e : v) { json ej; ::structmapper::detail::to_json(e, ej); j.push_back(std::move(ej)); }
         }
@@ -306,6 +316,8 @@ namespace structmapper {
 
         template <typename T>
         bool from_json(std::vector<T>& out, const json& j, const std::string& path, FromJsonLogger& logger);
+        template <typename T, size_t N>
+        bool from_json(std::array<T, N>& out, const json& j, const std::string& path, FromJsonLogger& logger);
         template <typename V>
         bool from_json(std::map<std::string, V>& out, const json& j, const std::string& path, FromJsonLogger& logger);
         template <typename T>
@@ -322,6 +334,24 @@ namespace structmapper {
             }
             out.clear();
             out.resize(j.size());
+            for (size_t i = 0; i < j.size(); ++i) {
+                const std::string elem_path = path + "[" + std::to_string(i) + "]";
+                ::structmapper::detail::from_json(out[i], j[i], elem_path, logger);
+            }
+            return true;
+        }
+
+        // array<T, N> -> array
+        template <typename T, size_t N>
+        bool from_json(std::array<T, N>& out, const json& j, const std::string& path, FromJsonLogger& logger) {
+            if (!j.is_array()) {
+                logger(FromJsonMismatchLog(path, "array", j.type_name()));
+                return false;
+            }
+            if (j.size() != out.size()) {
+                logger(FromJsonMismatchLog(path, "fixed-length array", j.type_name()));
+                return false;
+            }
             for (size_t i = 0; i < j.size(); ++i) {
                 const std::string elem_path = path + "[" + std::to_string(i) + "]";
                 ::structmapper::detail::from_json(out[i], j[i], elem_path, logger);

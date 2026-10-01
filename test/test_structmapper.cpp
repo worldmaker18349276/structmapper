@@ -35,7 +35,7 @@ struct Camera {
     Kind kind = "pinhole";
     CTSTR("/cam/image_raw") topic{};
     bool enabled = true;
-    std::vector<int> resolution = {1920, 1080};
+    std::array<int, 2> resolution = {1920, 1080};
     std::map<std::string, int> tags = {};
     Socket socket;
     std::uint32_t buffer_size = 10;
@@ -302,7 +302,7 @@ TEST(StructFromJson, AllFieldsPresentAndMatchingTypeAreAllLoaded) {
     EXPECT_EQ(cam.fov, 45.0);
     EXPECT_EQ(cam.aspect, 2.0);
     EXPECT_TRUE(cam.enabled);
-    EXPECT_EQ(cam.resolution, (std::vector<int>{800, 600}));
+    EXPECT_EQ(cam.resolution, (std::array<int, 2>{800, 600}));
     EXPECT_EQ(cam.tags.at("x"), 1);
     EXPECT_EQ(cam.socket.id, 3);
     EXPECT_EQ(cam.socket.name, "s1");
@@ -540,6 +540,8 @@ TEST(ToSchema, Schema) {
                 {"items", {
                     {"type", "integer"}
                 }},
+                {"minItems", 2},
+                {"maxItems", 2},
                 {"type", "array"}
             }},
             {"socket", {

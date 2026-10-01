@@ -405,7 +405,7 @@ class TestFromDict(unittest.TestCase):
 class TestToSchema(unittest.TestCase):
 
     def test_any(self):
-        self.assertEqual(to_schema(Any), {})
+        self.assertEqual(to_schema(Any), {"type": ["null", "boolean", "integer", "number", "string", "array", "object"]})
 
     def test_scalar(self):
         self.assertEqual(
@@ -471,10 +471,8 @@ class TestToSchema(unittest.TestCase):
         self.assertEqual(
             schema,
             {
-                "description": "config",
-                "type": "object",
-                "properties": {
-                    "pose": {
+                "$defs": {
+                    "Pose": {
                         "description": "Pose(x: float, y: float)",
                         "type": "object",
                         "properties": {
@@ -482,15 +480,17 @@ class TestToSchema(unittest.TestCase):
                             "y": {"type": "number"},
                         },
                     },
+                },
+                "description": "config",
+                "type": "object",
+                "properties": {
+                    "pose": {
+                        "$ref": "#/$defs/Pose",
+                    },
                     "poses": {
                         "type": "array",
                         "items": {
-                            "description": "Pose(x: float, y: float)",
-                            "type": "object",
-                            "properties": {
-                                "x": {"type": "number"},
-                                "y": {"type": "number"},
-                            },
+                            "$ref": "#/$defs/Pose",
                         },
                     },
                     "values": {

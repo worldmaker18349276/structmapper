@@ -58,6 +58,7 @@
 #include <type_traits>
 #include <string>
 #include <vector>
+#include <array>
 #include <map>
 #include <nlohmann/json.hpp>
 #include "structmapper/strenum.hpp"
@@ -112,6 +113,7 @@ namespace structmapper {
     //   - strenum::StringEnum<...>  (serialized as its current c_str() value)
     //   - CompileTimeString<...>    (i.e. CTSTR("..."); serialized as its fixed value)
     //   - std::vector<U>            where U is itself json-convertible
+    //   - std::array<U, N>          where U is itself json-convertible
     //   - std::map<std::string, U>  where U is itself json-convertible
     //   - a reflectable struct (has reflect_fields())
     // Containers recurse, so vector<map<string, vector<int>>> etc. all work.
@@ -123,6 +125,13 @@ namespace structmapper {
         struct is_std_vector : std::false_type {};
         template <typename T, typename Alloc>
         struct is_std_vector<std::vector<T, Alloc>> : std::true_type {
+            using value_type = T;
+        };
+
+        template <typename T>
+        struct is_std_array : std::false_type {};
+        template <typename T, size_t N>
+        struct is_std_array<std::array<T, N>> : std::true_type {
             using value_type = T;
         };
 
@@ -172,15 +181,20 @@ namespace structmapper {
     // recursive lookup at all - only vector<U>/map<string,U> recurse into U.
     template <typename T,
               bool IsVector = detail::is_std_vector<T>::value,
+              bool IsArray = detail::is_std_array<T>::value,
               bool IsStringMap = detail::is_std_string_map<T>::value>
     struct is_json_convertible_impl : detail::is_json_leaf<T> {};
 
     template <typename T>
-    struct is_json_convertible_impl<T, /*IsVector=*/true, /*IsStringMap=*/false>
+    struct is_json_convertible_impl<T, /*IsVector=*/true, /*IsArray=*/false, /*IsStringMap=*/false>
         : is_json_convertible<typename detail::is_std_vector<T>::value_type> {};
 
     template <typename T>
-    struct is_json_convertible_impl<T, /*IsVector=*/false, /*IsStringMap=*/true>
+    struct is_json_convertible_impl<T, /*IsVector=*/false, /*IsArray=*/true, /*IsStringMap=*/false>
+        : is_json_convertible<typename detail::is_std_array<T>::value_type> {};
+
+    template <typename T>
+    struct is_json_convertible_impl<T, /*IsVector=*/false, /*IsArray=*/false, /*IsStringMap=*/true>
         : is_json_convertible<typename detail::is_std_string_map<T>::value_type> {};
 
     template <typename T>
@@ -211,7 +225,7 @@ namespace structmapper {
             "structmapper: this field's type is not JSON-convertible. "
             "Allowed field types are: bool, an arithmetic type, std::string, "
             "a StringEnum<...>, a CompileTimeString<...> (CTSTR(\"...\")), "
-            "std::vector<U>, std::map<std::string, U> (U checked recursively), "
+            "std::vector<U>, std::array<U, N>, std::map<std::string, U> (U checked recursively), "
             "or another reflectable struct declared with BEGIN_STRUCT/END_STRUCT "
             "or BEGIN_EXTERNAL_STRUCT/END_EXTERNAL_STRUCT.");
         return FieldInfo<Class, T>{name, desc, member};
@@ -237,7 +251,7 @@ namespace structmapper {
             "structmapper: this field's type is not JSON-convertible. "
             "Allowed field types are: bool, an arithmetic type, std::string, "
             "a StringEnum<...>, a CompileTimeString<...> (CTSTR(\"...\")), "
-            "std::vector<U>, std::map<std::string, U> (U checked recursively), "
+            "std::vector<U>, std::array<U, N>, std::map<std::string, U> (U checked recursively), "
             "or another reflectable struct declared with BEGIN_STRUCT/END_STRUCT "
             "or BEGIN_EXTERNAL_STRUCT/END_EXTERNAL_STRUCT.");
         return ExternalFieldInfo<Class, T>{name, desc, accessor, accessor};

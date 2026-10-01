@@ -129,7 +129,7 @@ namespace structmapper {
         // any
         template <>
         struct SchemaTraits<nlohmann::json> {
-            static nlohmann::json get(SchemaRefs&) { return nlohmann::json::object(); }
+            static nlohmann::json get(SchemaRefs&) { return {{"type", {"null", "boolean", "integer", "number", "string", "array", "object"}}}; }
             static constexpr bool is_scalar = false;
         };
 
@@ -201,6 +201,14 @@ namespace structmapper {
             }
         };
 
+        template <typename T, size_t N>
+        struct CountTraits<std::array<T, N>> {
+            static void count(const std::map<std::type_index, std::string>& ext_refs,
+                               std::map<std::type_index, int>& counts) {
+                count_types<T>(ext_refs, counts);
+            }
+        };
+
         template <typename V>
         struct CountTraits<std::map<std::string, V>> {
             static void count(const std::map<std::type_index, std::string>& ext_refs,
@@ -251,6 +259,20 @@ namespace structmapper {
                 nlohmann::json j;
                 j["type"] = "array";
                 j["items"] = type_schema<T>(ctx);
+                return j;
+            }
+            static constexpr bool is_scalar = false;
+        };
+
+        // array<T, N> -> array
+        template <typename T, size_t N>
+        struct SchemaTraits<std::array<T, N>> {
+            static nlohmann::json get(SchemaRefs& ctx) {
+                nlohmann::json j;
+                j["type"] = "array";
+                j["items"] = type_schema<T>(ctx);
+                j["minItems"] = N;
+                j["maxItems"] = N;
                 return j;
             }
             static constexpr bool is_scalar = false;

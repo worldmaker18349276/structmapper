@@ -124,6 +124,7 @@ def from_json(cls: Union[type, Any], data: JSON, *, path: str = "$", check_exter
     - dataclass with valid type hints for from_json, it must be default constructable.
     - JSON type: NoneType, bool, int, float, str, List[T], Dict[str, T]
     - immutable tuple: Tuple[T, ...]
+    - fixed-length list: Tuple[T, T, T]
     - string enum: Literal['option1', 'option2', 'option3']
     - schema type: ExternalType[Literal['path/to/your.schema.json']]
     - Any
@@ -192,6 +193,22 @@ def from_json(cls: Union[type, Any], data: JSON, *, path: str = "$", check_exter
             arr.append(from_json(element_type, v, path=f"{path}[{i}]", check_external=check_external))
         return tuple(arr) if origin in (tuple, Tuple) else arr
 
+    # Tuple[T, T, T]
+    if origin in (tuple, Tuple) and len(set(args)) == 1:
+        arr: List[Any] = []
+        if not isinstance(data, list):
+            warnings.warn(TypeMismatchWarning(path, "list", type(data).__name__))
+            return arr
+        if len(data) != len(args):
+            warnings.warn(TypeMismatchWarning(path, "fixed-length list", type(data).__name__))
+            return arr
+
+        element_type = args[0] if args else Any
+
+        for i, v in enumerate(data):
+            arr.append(from_json(element_type, v, path=f"{path}[{i}]", check_external=check_external))
+        return tuple(arr)
+
     # Dict[K, V]
     if origin in (dict, Dict, Mapping):
         obj: Dict[str, Any] = {}
@@ -239,16 +256,16 @@ class FromJson:
     def to_schema(cls) -> JSON:
         return to_schema(cls, {})
 
-def type_check(cls: Union[type, Any], data: Any, *, path: str = "$", check_external: bool = False) -> bool:
+def type_check(cls: Union[type, Any], obj: Any, *, path: str = "$", check_external: bool = False) -> bool:
     """
     Validate `data` against a type hint `cls` like `from_json`, without construct instance.
     """
     if cls is Any:
         return True
 
-    data_class = cast(Type[Any], type(data))
+    data_class = cast(Type[Any], type(obj))
     if isinstance(cls, type) and is_dataclass(cls):
-        if not isinstance(data, cls):
+        if not isinstance(obj, cls):
             warnings.warn(ClassMismatchWarning(path, cls, data_class))
             return False
 
@@ -258,7 +275,7 @@ def type_check(cls: Union[type, Any], data: Any, *, path: str = "$", check_exter
 
         for key in field_map.keys():
             field_path = f"{path}.{key}"
-            if not type_check(type_hints.get(key, field_map[key].type), getattr(data, key), path=field_path, check_external=check_external):
+            if not type_check(type_hints.get(key, field_map[key].type), getattr(obj, key), path=field_path, check_external=check_external):
                 ok = False
 
         return ok
@@ -270,54 +287,82 @@ def type_check(cls: Union[type, Any], data: Any, *, path: str = "$", check_exter
         if check_external:
             schema_filepath = get_args(get_args(cls)[0])[0]
             literal_filepath = get_args(get_args(cls)[1])[0]
-            return type_check_json({"$ref": schema_filepath}, Path(literal_filepath), data, path=path)
+            return type_check_json({"$ref": schema_filepath}, Path(literal_filepath), obj, path=path)
         else:
             return True
 
     if origin is Literal:
-        if data not in args:
-            warnings.warn(TypeMismatchWarning(path, " | ".join(repr(value) for value in args), repr(data)))
+        if obj not in args:
+            warnings.warn(TypeMismatchWarning(path, " | ".join(repr(value) for value in args), repr(obj)))
             return False
         return True
 
-    if origin in (list, List) or origin in (tuple, Tuple) and len(args) == 0 or origin in (tuple, Tuple) and len(args) == 2 and args[-1] is Ellipsis:
-        if not isinstance(data, list):
+    if origin in (list, List):
+        if not isinstance(obj, list):
             warnings.warn(ClassMismatchWarning(path, list, data_class))
             return False
         element_type = args[0] if args else Any
         ok = True
-        for i, v in enumerate(cast(List[Any], data)):
+        for i, v in enumerate(cast(List[Any], obj)):
+            if not type_check(element_type, v, path=f"{path}[{i}]", check_external=check_external):
+                ok = False
+        return ok
+
+    if origin in (tuple, Tuple) and len(args) == 0 or origin in (tuple, Tuple) and len(args) == 2 and args[-1] is Ellipsis:
+        if not isinstance(obj, tuple):
+            warnings.warn(ClassMismatchWarning(path, tuple, data_class))
+            return False
+        element_type = args[0] if args else Any
+        ok = True
+        for i, v in enumerate(cast(Tuple[Any, ...], obj)):
+            if not type_check(element_type, v, path=f"{path}[{i}]", check_external=check_external):
+                ok = False
+        return ok
+
+    if origin in (tuple, Tuple) and len(set(args)) == 1:
+        if not isinstance(obj, tuple):
+            warnings.warn(TypeMismatchWarning(path, "tuple", type(obj).__name__))
+            return False
+        obj = cast(Tuple[Any, ...], obj)
+        if len(obj) != len(args):
+            warnings.warn(TypeMismatchWarning(path, "fixed-length tuple", type(obj).__name__))
+            return False
+
+        element_type = args[0] if args else Any
+
+        ok = True
+        for i, v in enumerate(obj):
             if not type_check(element_type, v, path=f"{path}[{i}]", check_external=check_external):
                 ok = False
         return ok
 
     if origin in (dict, Dict, Mapping):
-        if not isinstance(data, dict):
+        if not isinstance(obj, dict):
             warnings.warn(ClassMismatchWarning(path, dict, data_class))
             return False
         assert len(args) == 0 or args[0] is str
         value_type = args[1] if len(args) > 1 else Any
         ok = True
-        for k, v in cast(Dict[str, Any], data).items():
+        for k, v in cast(Dict[str, Any], obj).items():
             if not type_check(value_type, v, path=f"{path}[{k!r}]", check_external=check_external):
                 ok = False
         return ok
 
     if isinstance(cls, type) and cls in (type(None), bool, int, float, str):
-        if type(data) != cls:
+        if type(obj) != cls:
             warnings.warn(ClassMismatchWarning(path, cls, data_class))
             return False
         return True
 
     raise TypeError(f"unknown type: {cls} ({origin})")
 
-def type_check_json(schema: Dict[Any, Any], schema_path: Path, data: JSON, *, path: str = "$") -> bool:
+def type_check_json(schema: Dict[str, JSON], schema_path: Path, data: JSON, *, path: str = "$") -> bool:
     """Validate `data` against a JSON schema dict, but only the shapes
     that `to_schema` actually produces.
     """
 
-    # {} == Any
-    if schema.get("type") is None:
+    # Any
+    if isinstance(typ := schema.get("type"), list) and set(typ) == {"null", "boolean", "integer", "number", "string", "array", "object"}:
         return True
 
     # ExternalType[...] - validated against a schema defined elsewhere
@@ -327,8 +372,8 @@ def type_check_json(schema: Dict[Any, Any], schema_path: Path, data: JSON, *, pa
             inner_schema = json.load(fp)
             return type_check_json(inner_schema, inner_schema_path, data, path=path)
 
-    if isinstance(anyOf := schema.get("anyOf"), list) and anyOf and isinstance(inner_schema := cast(Any, anyOf[0]), dict):
-        return type_check_json(cast(Dict[Any, Any], inner_schema), schema_path, data, path=path)
+    if isinstance(anyOf := schema.get("anyOf"), list) and anyOf and isinstance(inner_schema := anyOf[0], dict):
+        return type_check_json(inner_schema, schema_path, data, path=path)
 
     if "const" in schema:
         return schema["const"] == data
@@ -344,15 +389,15 @@ def type_check_json(schema: Dict[Any, Any], schema_path: Path, data: JSON, *, pa
             return False
 
         ok = True
-        for key, field_schema in cast(Dict[Any, Any], properties).items():
-            if not isinstance(key, str): continue
+        for key, field_schema in properties.items():
+            if not isinstance(key, str): continue # pyright: ignore[reportUnnecessaryIsInstance]
             if not isinstance(field_schema, dict): continue
             field_path = f"{path}.{key}"
             if key not in data:
                 warnings.warn(MissingWarning(field_path))
                 ok = False
                 continue
-            if not type_check_json(cast(Dict[Any, Any], field_schema), schema_path, data[key], path=field_path):
+            if not type_check_json(field_schema, schema_path, data[key], path=field_path):
                 ok = False
 
         for key in data.keys():
@@ -369,7 +414,7 @@ def type_check_json(schema: Dict[Any, Any], schema_path: Path, data: JSON, *, pa
 
         ok = True
         for k, v in data.items():
-            if not type_check_json(cast(Dict[Any, Any], value_schema), schema_path, v, path=f"{path}[{k!r}]"):
+            if not type_check_json(value_schema, schema_path, v, path=f"{path}[{k!r}]"):
                 ok = False
         return ok
 
@@ -380,7 +425,7 @@ def type_check_json(schema: Dict[Any, Any], schema_path: Path, data: JSON, *, pa
 
         ok = True
         for i, v in enumerate(data):
-            if not type_check_json(cast(Dict[Any, Any], item_schema), schema_path, v, path=f"{path}[{i}]"):
+            if not type_check_json(item_schema, schema_path, v, path=f"{path}[{i}]"):
                 ok = False
         return ok
 
@@ -418,6 +463,10 @@ def _count_type(cls: Any, counts: Dict[type, int], refs: Dict[type, str]) -> Non
         _count_type(args[0] if len(args) == 1 else Any, counts, refs)
         return
 
+    if origin in (tuple, Tuple) and len(set(args)) == 1:
+        _count_type(args[0] if len(args) == 1 else Any, counts, refs)
+        return
+
     if origin in (dict, Dict, Mapping):
         assert len(args) == 0 or len(args) == 2 and args[0] is str
         _count_type(args[1] if len(args) == 2 else Any, counts, refs)
@@ -433,6 +482,7 @@ def _make_schema(cls: Any, defs_root: bool, refs: Dict[type, str]) -> Dict[str, 
     schema: Dict[str, JSON] = {}
 
     if cls is Any:
+        schema["type"] = ["null", "boolean", "integer", "number", "string", "array", "object"]
         return schema
 
     if isinstance(cls, type) and is_dataclass(cls):
@@ -473,6 +523,15 @@ def _make_schema(cls: Any, defs_root: bool, refs: Dict[type, str]) -> Dict[str, 
         }
         return schema
 
+    if origin in (tuple, Tuple) and len(set(args)) == 1:
+        schema = {
+            "type": "array",
+            "items": _make_schema(args[0] if len(args) == 1 else Any, False, refs),
+            "minItems": len(args),
+            "maxItems": len(args),
+        }
+        return schema
+
     if origin in (dict, Dict, Mapping):
         assert len(args) == 0 or len(args) == 2 and args[0] is str
         schema = {
@@ -502,16 +561,17 @@ def _choose_unique_defs_name(cls: type, defs_: Dict[str, type]) -> str:
         name = candidate
     return name
 
-def to_schema(cls: Union[type, Any], refs: Dict[type, str]) -> Dict[str, JSON]:
+def to_schema(cls: Union[type, Any], refs: Dict[type, str] = {}) -> Dict[str, JSON]:
     """
     convert type hints (valid for `from_json`) to JSON schema.
     
-        Any                       -> {}
+        Any                       -> {"type": ["null", "boolean", "integer", "number", "string", "array", "object"]}
         NoneType                  -> {"type": "null"}
         scalar                    -> {"type": "boolean" | "integer" | "number" | "string"}
         dataclass                 -> {"type": "object", "properties": {...}}
         Dict[str, V]              -> {"type": "object", "additionalProperties": {...}}
         List[T], Tuple[T, ...]    -> {"type": "array", "items": {...}}
+        Tuple[T, T, T]            -> {"type": "array", "items": {...}, "minItems": 3, "maxItems": 3}
         ExternalType[...]         -> {"$ref": "..."}
         Literal["...", ...]       -> {"enum": [...]}
         Literal["..."]            -> {"const": ...}
@@ -520,8 +580,8 @@ def to_schema(cls: Union[type, Any], refs: Dict[type, str]) -> Dict[str, JSON]:
 
     """
     counts: Dict[type, int] = {}
-    _count_type(cls, counts, refs)
     refs = dict(refs)
+    _count_type(cls, counts, refs)
     defs_: Dict[str, type] = {}
     for typ, count in counts.items():
         if count >= 2 and typ not in refs:
@@ -532,5 +592,6 @@ def to_schema(cls: Union[type, Any], refs: Dict[type, str]) -> Dict[str, JSON]:
     for name, typ in defs_.items():
         defs[name] = _make_schema(typ, True, refs)
     root = _make_schema(cls, False, refs)
-    root["$defs"] = defs
+    if defs:
+        root["$defs"] = defs
     return root
