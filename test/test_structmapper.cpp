@@ -529,7 +529,6 @@ TEST(ToSchema, Schema) {
                 {"type", "number"}
             }},
             {"kind", {
-                {"default", "pinhole"},
                 {"description", "camera projection kind"},
                 {"enum", {
                     "pinhole",
@@ -537,6 +536,7 @@ TEST(ToSchema, Schema) {
                 }}
             }},
             {"resolution", {
+                {"default", {1920, 1080}},
                 {"description", "pixel resolution [w,h]"},
                 {"items", {
                     {"type", "integer"}
@@ -551,7 +551,6 @@ TEST(ToSchema, Schema) {
                         {"description", "inner widget"},
                         {"properties", {
                             {"id", {
-                                {"default", 0},
                                 {"description", "socket id"},
                                 {"type", "integer"}
                             }},
@@ -575,7 +574,6 @@ TEST(ToSchema, Schema) {
             }},
             {"topic", {
                 {"const", "/cam/image_raw"},
-                {"default", "/cam/image_raw"},
                 {"description", "output topic"}
             }}
         }},
@@ -596,22 +594,18 @@ TEST(ToSchema, SchemaWithExternalType) {
                         {"description", "quaternion"},
                         {"properties", {
                             {"w", {
-                                {"default", 0.0},
                                 {"description", "w coordinate"},
                                 {"type", "number"},
                             }},
                             {"x", {
-                                {"default", 0.0},
                                 {"description", "x coordinate"},
                                 {"type", "number"},
                             }},
                             {"y", {
-                                {"default", 0.0},
                                 {"description", "y coordinate"},
                                 {"type", "number"},
                             }},
                             {"z", {
-                                {"default", 0.0},
                                 {"description", "z coordinate"},
                                 {"type", "number"},
                             }},
@@ -627,17 +621,14 @@ TEST(ToSchema, SchemaWithExternalType) {
                         {"description", "vector"},
                         {"properties", {
                             {"x", {
-                                {"default", 0.0},
                                 {"description", "x coordinate"},
                                 {"type", "number"},
                             }},
                             {"y", {
-                                {"default", 0.0},
                                 {"description", "y coordinate"},
                                 {"type", "number"},
                             }},
                             {"z", {
-                                {"default", 0.0},
                                 {"description", "z coordinate"},
                                 {"type", "number"},
                             }},

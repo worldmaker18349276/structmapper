@@ -38,6 +38,7 @@
 #pragma once
 #include "struct_reflect.hpp"
 #include "struct_to_json.hpp"
+#include "struct_equal.hpp"
 #include <nlohmann/json.hpp>
 #include <map>
 #include <memory>
@@ -357,22 +358,19 @@ namespace structmapper {
         template <typename T>
         nlohmann::json field_schema(const T& default_value, const char* desc, SchemaRefs& ctx) {
             using Bare = typename std::decay<T>::type;
-            nlohmann::json ts = type_schema<Bare>(ctx);
-
-            nlohmann::json j;
-            j["description"] = desc;
-            if (SchemaTraits<Bare>::is_scalar) {
-                j["default"] = ::structmapper::convert_to_json(default_value);
-            }
+            nlohmann::json j = type_schema<Bare>(ctx);
 
             if (is_reflectable<Bare>::value) {
                 // type_schema already carries its own "description" (the struct's);
                 // keep both by nesting rather than letting one overwrite the other.
-                j["anyOf"] = nlohmann::json::array({std::move(ts)});
-            } else {
-                for (auto it = ts.begin(); it != ts.end(); ++it) {
-                    j[it.key()] = it.value();
-                }
+                j = nlohmann::json::object({{"anyOf", nlohmann::json::array({std::move(j)})}});
+            }
+
+            if (desc != nullptr) {
+                j["description"] = desc;
+            }
+            if (!struct_equal<Bare>(Bare{}, default_value)) {
+                j["default"] = ::structmapper::convert_to_json(default_value);
             }
             return j;
         }

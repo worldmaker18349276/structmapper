@@ -405,7 +405,7 @@ class TestFromDict(unittest.TestCase):
 class TestToSchema(unittest.TestCase):
 
     def test_any(self):
-        self.assertEqual(to_schema(Any), {"type": ["null", "boolean", "integer", "number", "string", "array", "object"]})
+        self.assertEqual(to_schema(Any), {})
 
     def test_scalar(self):
         self.assertEqual(

@@ -103,6 +103,9 @@ namespace strenum {
         }
 
     public:
+        constexpr StringEnum() : value_(values[0]) {
+            static_assert(values.size() > 0);
+        }
         constexpr StringEnum(const char* s) : value_(find(s)) {
             if (!value_)
                 cannot_call_non_constexpr_function_means_input_string_is_invalid_for_this_enum(s);
