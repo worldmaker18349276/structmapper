@@ -10,6 +10,7 @@
 #include "structmapper/struct_reflect.hpp"
 #include "structmapper/struct_to_json.hpp"
 #include "structmapper/struct_to_schema.hpp"
+#include "structmapper/struct_equal.hpp"
 #include "structmapper/xmlrpc_to_json.hpp"
 
 using nlohmann::json;
@@ -880,6 +881,401 @@ TEST(RoundTrip, Base64ThroughJsonAndBackLosesTypeButKeepsPlaceholder) {
 
     EXPECT_EQ(back.getType(), XmlRpc::XmlRpcValue::TypeStruct)
         << "binary-ness is not recoverable from JSON, per the header doc";
+}
+
+// ---------------------------------------------------------------------
+// Helpers (Vector/Quaternion/Pose have uninitialized storage by default)
+// ---------------------------------------------------------------------
+ 
+namespace {
+    constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
+    constexpr double kInf = std::numeric_limits<double>::infinity();
+}
+
+static Vector MakeVec(double x, double y, double z) {
+    Vector v;
+    v.x() = x; v.y() = y; v.z() = z;
+    return v;
+}
+
+static Quaternion MakeQuat(double x, double y, double z, double w) {
+    Quaternion q;
+    q.x() = x; q.y() = y; q.z() = z; q.w() = w;
+    return q;
+}
+
+static Pose MakePose(double px = 1, double py = 2, double pz = 3) {
+    Pose p;
+    p.position = MakeVec(px, py, pz);
+    p.orientation = MakeQuat(0, 0, 0, 1);
+    return p;
+}
+
+// ---------------------------------------------------------------------
+// Leaf types
+// ---------------------------------------------------------------------
+
+TEST(StructEqualLeaf, Bool) {
+    EXPECT_TRUE(structmapper::struct_equal(true, true));
+    EXPECT_TRUE(structmapper::struct_equal(false, false));
+    EXPECT_FALSE(structmapper::struct_equal(true, false));
+}
+
+TEST(StructEqualLeaf, Integers) {
+    EXPECT_TRUE(structmapper::struct_equal(42, 42));
+    EXPECT_FALSE(structmapper::struct_equal(42, 43));
+    EXPECT_TRUE(structmapper::struct_equal<std::uint32_t>(7u, 7u));
+    EXPECT_FALSE(structmapper::struct_equal<std::uint32_t>(7u, 8u));
+}
+
+TEST(StructEqualLeaf, String) {
+    EXPECT_TRUE(structmapper::struct_equal(std::string("abc"), std::string("abc")));
+    EXPECT_FALSE(structmapper::struct_equal(std::string("abc"), std::string("abd")));
+    EXPECT_TRUE(structmapper::struct_equal(std::string(), std::string()));
+    EXPECT_FALSE(structmapper::struct_equal(std::string("a"), std::string()));
+}
+
+TEST(StructEqualLeaf, FloatingPoint) {
+    EXPECT_TRUE(structmapper::struct_equal(1.5, 1.5));
+    EXPECT_FALSE(structmapper::struct_equal(1.5, 1.6));
+    EXPECT_TRUE(structmapper::struct_equal(0.0, -0.0));
+    EXPECT_TRUE(structmapper::struct_equal(kInf, kInf));
+    EXPECT_FALSE(structmapper::struct_equal(kInf, -kInf));
+    EXPECT_TRUE(structmapper::struct_equal(1.5f, 1.5f));
+}
+
+TEST(StructEqualLeaf, NaNEqualsNaN) {
+    EXPECT_TRUE(structmapper::struct_equal(kNaN, kNaN));
+    EXPECT_TRUE(structmapper::struct_equal(kNaN, -kNaN));  // sign of NaN doesn't matter
+    EXPECT_TRUE(structmapper::struct_equal(std::numeric_limits<float>::quiet_NaN(),
+                             std::numeric_limits<float>::quiet_NaN()));
+    EXPECT_FALSE(structmapper::struct_equal(kNaN, 1.0));
+    EXPECT_FALSE(structmapper::struct_equal(1.0, kNaN));
+    EXPECT_FALSE(structmapper::struct_equal(kNaN, kInf));
+}
+
+// ---------------------------------------------------------------------
+// StringEnum / CompileTimeString
+// ---------------------------------------------------------------------
+
+TEST(StructEqualStringEnum, SameAndDifferent) {
+    MyEnum a = "foo";
+    MyEnum b = "foo";
+    MyEnum c = "bar";
+    EXPECT_TRUE(structmapper::struct_equal(a, b));
+    EXPECT_FALSE(structmapper::struct_equal(a, c));
+    EXPECT_FALSE(structmapper::struct_equal(c, b));
+}
+
+TEST(StructEqualStringEnum, CompileTimeStringAlwaysEqual) {
+    CTSTR("/some/topic") a{};
+    CTSTR("/some/topic") b{};
+    EXPECT_TRUE(structmapper::struct_equal(a, b));
+}
+
+// ---------------------------------------------------------------------
+// nlohmann::json
+// ---------------------------------------------------------------------
+
+TEST(StructEqualJson, Scalars) {
+    EXPECT_TRUE(structmapper::struct_equal(json(1), json(1)));
+    EXPECT_FALSE(structmapper::struct_equal(json(1), json(2)));
+    EXPECT_TRUE(structmapper::struct_equal(json("a"), json("a")));
+    EXPECT_FALSE(structmapper::struct_equal(json("a"), json(1)));
+    EXPECT_TRUE(structmapper::struct_equal(json(nullptr), json(nullptr)));
+    EXPECT_FALSE(structmapper::struct_equal(json(nullptr), json(0)));
+}
+
+TEST(StructEqualJson, NaNScalar) {
+    EXPECT_TRUE(structmapper::struct_equal(json(kNaN), json(kNaN)));
+    EXPECT_FALSE(structmapper::struct_equal(json(kNaN), json(1.0)));
+    EXPECT_FALSE(structmapper::struct_equal(json(kNaN), json(nullptr)));
+    // sanity: json's own operator== disagrees, which is why we recurse
+    EXPECT_FALSE(json(kNaN) == json(kNaN));
+}
+
+TEST(StructEqualJson, DifferentNumericKindsAreDifferent) {
+    EXPECT_FALSE(structmapper::struct_equal(json(1), json(1.0)));
+    EXPECT_FALSE(structmapper::struct_equal(json(true), json(1)));
+    EXPECT_FALSE(structmapper::struct_equal(json(false), json(0)));
+    EXPECT_FALSE(structmapper::struct_equal(json(1.0), json(true)));
+    EXPECT_TRUE(structmapper::struct_equal(json(5), json(5u)));   // signed/unsigned: same kind
+    EXPECT_FALSE(structmapper::struct_equal(json(-1), json(1u)));
+    EXPECT_FALSE(structmapper::struct_equal(json::array({1}), json::array({1.0})));  // also nested
+    // sanity: json's own operator== don't care the internal type of numbers
+    EXPECT_TRUE(json(1) == json(1.0));
+}
+
+TEST(StructEqualJson, NaNNestedInArrayAndObject) {
+    json a = json::object();
+    a["k"] = kNaN;
+    a["arr"] = json::array({1, kNaN, "x"});
+    json b = a;
+    EXPECT_TRUE(structmapper::struct_equal(a, b));
+
+    b["arr"][1] = 2.0;
+    EXPECT_FALSE(structmapper::struct_equal(a, b));
+}
+
+TEST(StructEqualJson, ArraysAndObjects) {
+    json a = json::array({1, 2, 3});
+    EXPECT_TRUE(structmapper::struct_equal(a, json::array({1, 2, 3})));
+    EXPECT_FALSE(structmapper::struct_equal(a, json::array({1, 2})));
+    EXPECT_FALSE(structmapper::struct_equal(a, json::array({1, 2, 4})));
+
+    json o1 = json::object({{"a", 1}, {"b", 2}});
+    json o2 = json::object({{"b", 2}, {"a", 1}});
+    json o3 = json::object({{"a", 1}, {"c", 2}});  // same size, different key
+    EXPECT_TRUE(structmapper::struct_equal(o1, o2));
+    EXPECT_FALSE(structmapper::struct_equal(o1, o3));
+    EXPECT_FALSE(structmapper::struct_equal(o1, json::object({{"a", 1}})));
+}
+
+TEST(StructEqualJson, ArrayVsObjectNotEqual) {
+    EXPECT_FALSE(structmapper::struct_equal(json::array(), json::object()));
+}
+
+// ---------------------------------------------------------------------
+// Containers
+// ---------------------------------------------------------------------
+
+TEST(StructEqualVector, Basics) {
+    std::vector<int> a = {1, 2, 3};
+    EXPECT_TRUE(structmapper::struct_equal(a, std::vector<int>{1, 2, 3}));
+    EXPECT_FALSE(structmapper::struct_equal(a, std::vector<int>{1, 2}));
+    EXPECT_FALSE(structmapper::struct_equal(a, std::vector<int>{1, 2, 4}));
+    EXPECT_FALSE(structmapper::struct_equal(a, std::vector<int>{3, 2, 1}));
+    EXPECT_TRUE(structmapper::struct_equal(std::vector<int>{}, std::vector<int>{}));
+    EXPECT_FALSE(structmapper::struct_equal(std::vector<int>{}, a));
+}
+
+TEST(StructEqualVector, VectorBool) {
+    std::vector<bool> a = {true, false, true};
+    EXPECT_TRUE(structmapper::struct_equal(a, std::vector<bool>{true, false, true}));
+    EXPECT_FALSE(structmapper::struct_equal(a, std::vector<bool>{true, true, true}));
+}
+
+TEST(StructEqualVector, NaNElements) {
+    std::vector<double> a = {1.0, kNaN, 3.0};
+    std::vector<double> b = {1.0, kNaN, 3.0};
+    EXPECT_TRUE(structmapper::struct_equal(a, b));
+    b[1] = 2.0;
+    EXPECT_FALSE(structmapper::struct_equal(a, b));
+}
+
+TEST(StructEqualVector, OfStructs) {
+    std::vector<Socket> a(2), b(2);
+    a[0].id = 1; a[1].id = 2;
+    b[0].id = 1; b[1].id = 2;
+    EXPECT_TRUE(structmapper::struct_equal(a, b));
+    b[1].name = "changed";
+    EXPECT_FALSE(structmapper::struct_equal(a, b));
+}
+
+TEST(StructEqualArray, Basics) {
+    std::array<int, 3> a = {1, 2, 3};
+    std::array<int, 3> b = {1, 2, 3};
+    EXPECT_TRUE(structmapper::struct_equal(a, b));
+    b[2] = 4;
+    EXPECT_FALSE(structmapper::struct_equal(a, b));
+
+    std::array<int, 0> e1, e2;
+    EXPECT_TRUE(structmapper::struct_equal(e1, e2));
+}
+
+TEST(StructEqualMap, Basics) {
+    using M = std::map<std::string, int>;
+    M a = {{"x", 1}, {"y", 2}};
+    EXPECT_TRUE(structmapper::struct_equal(a, M{{"y", 2}, {"x", 1}}));
+    EXPECT_FALSE(structmapper::struct_equal(a, M{{"x", 1}}));                  // size
+    EXPECT_FALSE(structmapper::struct_equal(a, M{{"x", 1}, {"z", 2}}));        // key
+    EXPECT_FALSE(structmapper::struct_equal(a, M{{"x", 1}, {"y", 3}}));        // value
+    EXPECT_TRUE(structmapper::struct_equal(M{}, M{}));
+}
+
+TEST(StructEqualMap, OfStructs) {
+    using M = std::map<std::string, Socket>;
+    M a, b;
+    a["s"].id = 5;
+    b["s"].id = 5;
+    EXPECT_TRUE(structmapper::struct_equal(a, b));
+    b["s"].id = 6;
+    EXPECT_FALSE(structmapper::struct_equal(a, b));
+}
+
+TEST(StructEqualNested, VectorOfMapOfVector) {
+    using Inner = std::map<std::string, std::vector<int>>;
+    std::vector<Inner> a = {{{"a", {1, 2}}, {"b", {}}}, {}};
+    std::vector<Inner> b = a;
+    EXPECT_TRUE(structmapper::struct_equal(a, b));
+
+    b[0]["a"][1] = 99;
+    EXPECT_FALSE(structmapper::struct_equal(a, b));
+
+    b = a;
+    b[1]["new"] = {1};
+    EXPECT_FALSE(structmapper::struct_equal(a, b));
+}
+
+// ---------------------------------------------------------------------
+// Intrusively reflected structs
+// ---------------------------------------------------------------------
+
+TEST(StructEqualStruct, SocketEquality) {
+    Socket a, b;
+    EXPECT_TRUE(structmapper::struct_equal(a, b));
+    b.id = 1;
+    EXPECT_FALSE(structmapper::struct_equal(a, b));
+    b = a;
+    b.name = "other";
+    EXPECT_FALSE(structmapper::struct_equal(a, b));
+}
+
+TEST(StructEqualStruct, CameraDefaultsEqual) {
+    Camera a, b;
+    EXPECT_TRUE(structmapper::struct_equal(a, b));
+}
+
+TEST(StructEqualStruct, CameraEachFieldDetected) {
+    const Camera base;
+
+    { Camera c; c.fov = 90.0;                    EXPECT_FALSE(structmapper::struct_equal(base, c)) << "fov"; }
+    { Camera c; c.aspect = 2.0;                  EXPECT_FALSE(structmapper::struct_equal(base, c)) << "aspect"; }
+    { Camera c; c.kind = "ortho";                EXPECT_FALSE(structmapper::struct_equal(base, c)) << "kind"; }
+    { Camera c; c.enabled = false;               EXPECT_FALSE(structmapper::struct_equal(base, c)) << "enabled"; }
+    { Camera c; c.resolution[1] = 720;           EXPECT_FALSE(structmapper::struct_equal(base, c)) << "resolution"; }
+    { Camera c; c.tags["k"] = 1;                 EXPECT_FALSE(structmapper::struct_equal(base, c)) << "tags"; }
+    { Camera c; c.socket.id = 3;                 EXPECT_FALSE(structmapper::struct_equal(base, c)) << "socket.id"; }
+    { Camera c; c.socket.name = "x";             EXPECT_FALSE(structmapper::struct_equal(base, c)) << "socket.name"; }
+    { Camera c; c.buffer_size = 11;              EXPECT_FALSE(structmapper::struct_equal(base, c)) << "buffer_size"; }
+}
+
+TEST(StructEqualStruct, CameraEqualAfterIdenticalMutation) {
+    Camera a, b;
+    a.fov = b.fov = 75.0;
+    a.kind = b.kind = "ortho";
+    a.tags["x"] = b.tags["x"] = 4;
+    a.socket.name = b.socket.name = "same";
+    EXPECT_TRUE(structmapper::struct_equal(a, b));
+}
+
+TEST(StructEqualStruct, CameraNaNFieldsAreEqual) {
+    Camera a, b;
+    a.fov = kNaN;
+    b.fov = kNaN;
+    EXPECT_TRUE(structmapper::struct_equal(a, b));
+    b.fov = 60.0;
+    EXPECT_FALSE(structmapper::struct_equal(a, b));
+}
+
+TEST(StructEqualStruct, ConstAndNonConstObjects) {
+    Camera a, b;
+    const Camera& ca = a;
+    EXPECT_TRUE(structmapper::struct_equal(ca, b));
+    EXPECT_TRUE(structmapper::struct_equal(a, a));
+}
+
+TEST(StructEqualStruct, SymmetryAndReflexivity) {
+    Camera a, b;
+    b.buffer_size = 99;
+    EXPECT_TRUE(structmapper::struct_equal(a, a));
+    EXPECT_EQ(structmapper::struct_equal(a, b), structmapper::struct_equal(b, a));
+
+    Camera n;
+    n.fov = kNaN;
+    EXPECT_TRUE(structmapper::struct_equal(n, n));  // reflexive even with NaN
+}
+
+// ---------------------------------------------------------------------
+// Externally reflected structs
+// ---------------------------------------------------------------------
+
+TEST(StructEqualExternal, Vector) {
+    EXPECT_TRUE(structmapper::struct_equal(MakeVec(1, 2, 3), MakeVec(1, 2, 3)));
+    EXPECT_FALSE(structmapper::struct_equal(MakeVec(1, 2, 3), MakeVec(0, 2, 3)));
+    EXPECT_FALSE(structmapper::struct_equal(MakeVec(1, 2, 3), MakeVec(1, 0, 3)));
+    EXPECT_FALSE(structmapper::struct_equal(MakeVec(1, 2, 3), MakeVec(1, 2, 0)));
+}
+
+TEST(StructEqualExternal, VectorNaN) {
+    EXPECT_TRUE(structmapper::struct_equal(MakeVec(kNaN, 2, 3), MakeVec(kNaN, 2, 3)));
+    EXPECT_TRUE(structmapper::struct_equal(MakeVec(kNaN, kNaN, kNaN), MakeVec(kNaN, kNaN, kNaN)));
+    EXPECT_FALSE(structmapper::struct_equal(MakeVec(kNaN, 2, 3), MakeVec(1, 2, 3)));
+}
+
+TEST(StructEqualExternal, Quaternion) {
+    EXPECT_TRUE(structmapper::struct_equal(MakeQuat(0, 0, 0, 1), MakeQuat(0, 0, 0, 1)));
+    EXPECT_FALSE(structmapper::struct_equal(MakeQuat(0, 0, 0, 1), MakeQuat(0, 0, 0, -1)));  // w
+    EXPECT_FALSE(structmapper::struct_equal(MakeQuat(0, 0, 0, 1), MakeQuat(1, 0, 0, 1)));   // x
+}
+
+TEST(StructEqualExternal, NestedInIntrusiveStruct) {
+    Pose a = MakePose();
+    Pose b = MakePose();
+    EXPECT_TRUE(structmapper::struct_equal(a, b));
+
+    b.position.y() = 20;
+    EXPECT_FALSE(structmapper::struct_equal(a, b));
+
+    b = MakePose();
+    b.orientation.w() = 0.5;
+    EXPECT_FALSE(structmapper::struct_equal(a, b));
+}
+
+TEST(StructEqualExternal, NaNInNestedExternal) {
+    Pose a = MakePose();
+    Pose b = MakePose();
+    a.orientation.x() = kNaN;
+    b.orientation.x() = kNaN;
+    EXPECT_TRUE(structmapper::struct_equal(a, b));
+}
+
+TEST(StructEqualExternal, InsideContainers) {
+    std::vector<Pose> a = {MakePose(1, 2, 3), MakePose(4, 5, 6)};
+    std::vector<Pose> b = {MakePose(1, 2, 3), MakePose(4, 5, 6)};
+    EXPECT_TRUE(structmapper::struct_equal(a, b));
+    b[1].position.z() = 0;
+    EXPECT_FALSE(structmapper::struct_equal(a, b));
+
+    std::map<std::string, Vector> m1, m2;
+    m1["v"] = MakeVec(1, 2, 3);
+    m2["v"] = MakeVec(1, 2, 3);
+    EXPECT_TRUE(structmapper::struct_equal(m1, m2));
+    m2["v"].x() = 9;
+    EXPECT_FALSE(structmapper::struct_equal(m1, m2));
+}
+
+// ---------------------------------------------------------------------
+// Self-recursive struct
+// ---------------------------------------------------------------------
+
+TEST(StructEqualRecursive, EmptyAndShallow) {
+    SelfRec a, b;
+    EXPECT_TRUE(structmapper::struct_equal(a, b));
+
+    a.rec["child"];
+    EXPECT_FALSE(structmapper::struct_equal(a, b));  // size differs
+    b.rec["child"];
+    EXPECT_TRUE(structmapper::struct_equal(a, b));
+}
+
+TEST(StructEqualRecursive, DeepTree) {
+    SelfRec a, b;
+    a.rec["x"].rec["y"].rec["z"];
+    b.rec["x"].rec["y"].rec["z"];
+    EXPECT_TRUE(structmapper::struct_equal(a, b));
+
+    // differ only at the deepest level (same key counts all the way down)
+    b.rec["x"].rec["y"].rec.erase("z");
+    b.rec["x"].rec["y"].rec["w"];
+    EXPECT_FALSE(structmapper::struct_equal(a, b));
+}
+
+TEST(StructEqualRecursive, SiblingsOrderIndependent) {
+    SelfRec a, b;
+    a.rec["p"]; a.rec["q"].rec["r"];
+    b.rec["q"].rec["r"]; b.rec["p"];
+    EXPECT_TRUE(structmapper::struct_equal(a, b));
 }
 
 int main(int argc, char** argv) {
