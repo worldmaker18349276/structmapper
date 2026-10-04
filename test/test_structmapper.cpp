@@ -686,6 +686,42 @@ TEST_F(XmlRpcToJsonTest, BooleanIntDoubleStringMapDirectly) {
     EXPECT_EQ(js, "hello");
 }
 
+TEST_F(XmlRpcToJsonTest, NaNInfinityNumberTypeArePreserved) {
+    {
+        XmlRpc::XmlRpcValue v;
+        v = std::numeric_limits<double>::quiet_NaN();
+        json j;
+        structmapper::XmlRpcToJsonStats stats;
+        j = structmapper::convert_xmlrpc_to_json(v, stats.logger());
+        EXPECT_TRUE(std::isnan(j.get<double>()));
+        EXPECT_TRUE(stats.ok());
+    }
+
+    {
+        XmlRpc::XmlRpcValue v;
+        v = std::numeric_limits<double>::infinity();
+        json j;
+        structmapper::XmlRpcToJsonStats stats;
+        j = structmapper::convert_xmlrpc_to_json(v, stats.logger());
+        EXPECT_TRUE(j.get<double>() == std::numeric_limits<double>::infinity());
+        EXPECT_TRUE(stats.ok());
+    }
+
+    {
+        XmlRpc::XmlRpcValue v;
+        v = 42;
+        json j = structmapper::convert_xmlrpc_to_json(v);
+        EXPECT_TRUE(j.is_number_integer());
+    }
+
+    {
+        XmlRpc::XmlRpcValue v;
+        v = 3.5;
+        json j = structmapper::convert_xmlrpc_to_json(v);
+        EXPECT_TRUE(j.is_number_float());
+    }
+}
+
 TEST_F(XmlRpcToJsonTest, InvalidValueBecomesNullAndIsLoggedAsWarning) {
     XmlRpc::XmlRpcValue v; // default-constructed == TypeInvalid
     json j;
