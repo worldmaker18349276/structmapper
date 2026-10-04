@@ -356,13 +356,47 @@ def type_check(cls: Union[type, Any], obj: Any, *, path: str = "$", check_extern
 
     raise TypeError(f"unknown type: {cls} ({origin})")
 
+def is_any(schema: JSON) -> bool:
+    """
+    determine if it is definitely an any type, such as:
+    - True
+    - {}
+    - {"type": ["null", "boolean", "number", "string", "array", "object"]}
+    - {"description": "an any type", "default": null}
+    it doesn't check in depth, other cases will be considered negative.
+    """
+    if schema is True:
+        return True
+    if not isinstance(schema, dict):
+        return False
+
+    _SCHEMA_ALL_TYPES = {"null", "boolean", "object", "array", "number", "string"}
+
+    _SCHEMA_ANNOTATIONS = {
+        "$schema", "$id", "id", "$comment", "$defs", "definitions",
+        "title", "description", "default", "examples",
+        "deprecated", "readOnly", "writeOnly",
+    }
+
+    for key, value in schema.items():
+        if key in _SCHEMA_ANNOTATIONS:
+            continue
+        if key == "type":
+            types = {value} if isinstance(value, str) else set(value) if isinstance(value, list) else None
+            if types is None or not _SCHEMA_ALL_TYPES <= types:
+                return False
+            continue
+        return False
+
+    return True
+
 def type_check_json(schema: Dict[str, JSON], schema_path: Path, data: JSON, *, path: str = "$") -> bool:
     """Validate `data` against a JSON schema dict, but only the shapes
     that `to_schema` actually produces.
     """
 
     # Any
-    if isinstance(typ := schema.get("type"), list) and set(typ) == {"null", "boolean", "integer", "number", "string", "array", "object"}:
+    if is_any(schema):
         return True
 
     # ExternalType[...] - validated against a schema defined elsewhere
