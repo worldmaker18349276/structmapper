@@ -482,7 +482,7 @@ def _make_schema(cls: Any, defs_root: bool, refs: Dict[type, str]) -> Dict[str, 
     schema: Dict[str, JSON] = {}
 
     if cls is Any:
-        schema["type"] = ["null", "boolean", "integer", "number", "string", "array", "object"]
+        schema = {}
         return schema
 
     if isinstance(cls, type) and is_dataclass(cls):

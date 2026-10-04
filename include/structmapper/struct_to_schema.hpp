@@ -129,7 +129,7 @@ namespace structmapper {
         // any
         template <>
         struct SchemaTraits<nlohmann::json> {
-            static nlohmann::json get(SchemaRefs&) { return {{"type", {"null", "boolean", "integer", "number", "string", "array", "object"}}}; }
+            static nlohmann::json get(SchemaRefs&) { return nlohmann::json::object(); }
             static constexpr bool is_scalar = false;
         };
 
