@@ -220,14 +220,7 @@ namespace structmapper {
     };
 
     template <typename Class, typename T>
-    constexpr FieldInfo<Class, T> make_field(const char* name, T Class::*member, const char* desc) {
-        static_assert(is_json_convertible<T>::value,
-            "structmapper: this field's type is not JSON-convertible. "
-            "Allowed field types are: bool, an arithmetic type, std::string, "
-            "a StringEnum<...>, a CompileTimeString<...> (CTSTR(\"...\")), "
-            "std::vector<U>, std::array<U, N>, std::map<std::string, U> (U checked recursively), "
-            "or another reflectable struct declared with BEGIN_STRUCT/END_STRUCT "
-            "or BEGIN_EXTERNAL_STRUCT/END_EXTERNAL_STRUCT.");
+    constexpr FieldInfo<Class, T> create_field_info(const char* name, const char* desc, T Class::*member) {
         return FieldInfo<Class, T>{name, desc, member};
     }
 
@@ -244,18 +237,6 @@ namespace structmapper {
         using value_type = T;
         using class_type = Class;
     };
-
-    template <typename Class, typename T, typename F>
-    constexpr ExternalFieldInfo<Class, T> make_external_field(const char* name, F accessor, const char* desc) {
-        static_assert(is_json_convertible<T>::value,
-            "structmapper: this field's type is not JSON-convertible. "
-            "Allowed field types are: bool, an arithmetic type, std::string, "
-            "a StringEnum<...>, a CompileTimeString<...> (CTSTR(\"...\")), "
-            "std::vector<U>, std::array<U, N>, std::map<std::string, U> (U checked recursively), "
-            "or another reflectable struct declared with BEGIN_STRUCT/END_STRUCT "
-            "or BEGIN_EXTERNAL_STRUCT/END_EXTERNAL_STRUCT.");
-        return ExternalFieldInfo<Class, T>{name, desc, accessor, accessor};
-    }
 
     // ---------------------------------------------------------------------
     // reflect_fields(obj) / reflect_struct_desc<T>(): uniform access to a
@@ -357,11 +338,16 @@ public:                                                                        \
         static const auto fields_ = std::tuple_cat(                            \
             std::tuple<>{}
 
-#define FIELD(VAR, DESC)                                                       \
-            , std::make_tuple(::structmapper::make_field<ReflectSelf>(#VAR, &ReflectSelf::VAR, DESC))
-
 #define FIELD_(VAR, NAME, DESC)                                                \
-            , std::make_tuple(::structmapper::make_field<ReflectSelf>(NAME, &ReflectSelf::VAR, DESC))
+            , std::make_tuple([]() { \
+                static_assert( \
+                    ::structmapper::is_json_convertible<decltype(std::declval<ReflectSelf>().VAR)>::value, \
+                    "structmapper: type of field " #VAR " is not JSON-convertible" \
+                ); \
+                return ::structmapper::create_field_info<ReflectSelf>(NAME, DESC, &ReflectSelf::VAR); \
+            }())
+
+#define FIELD(VAR, DESC) FIELD_(VAR, #VAR, DESC)
 
 #define END_STRUCT()                                                           \
         );                                                                     \
@@ -391,9 +377,27 @@ namespace structmapper {                                                      \
             static const auto fields_ = std::tuple_cat(                       \
                 std::tuple<>{}
 
-#define EXTERNAL_FIELD_(TYPE, EXPR, NAME, DESC)                               \
-                , std::make_tuple(::structmapper::make_external_field<ReflectSelf, TYPE>(\
-                    NAME, [](auto&& self) -> decltype(auto) { return (std::forward<decltype(self)>(self).EXPR); }, DESC))
+#define EXTERNAL_FIELD_(TYPE, EXPR, NAME, DESC) \
+                , std::make_tuple([]() { \
+                    auto accessor = [](auto&& self) -> decltype(auto) { \
+                        return (std::forward<decltype(self)>(self).EXPR); \
+                    }; \
+                    static_assert( \
+                        ::structmapper::is_json_convertible<TYPE>::value, \
+                        "structmapper: type of field expression " #EXPR " is not JSON-convertible" \
+                    ); \
+                    static_assert( \
+                        std::is_same<decltype(accessor(std::declval<ReflectSelf&>())), TYPE&>::value, \
+                        "structmapper: external field expression " #EXPR " must return reference of " #TYPE \
+                    ); \
+                    static_assert( \
+                        std::is_same<decltype(accessor(std::declval<const ReflectSelf&>())), const TYPE&>::value, \
+                        "structmapper: external field expression " #EXPR " must return const reference of " #TYPE \
+                    ); \
+                    return ::structmapper::ExternalFieldInfo<ReflectSelf, TYPE>{ \
+                        NAME, DESC, accessor, accessor \
+                    }; \
+                }())
 
 #define END_EXTERNAL_STRUCT()                                                 \
             );                                                                \
