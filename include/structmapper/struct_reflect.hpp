@@ -33,8 +33,8 @@
 //   };
 //
 //   BEGIN_EXTERNAL_STRUCT(ThirdPartyCamera, "camera parameters")
-//       EXTERNAL_FIELD_(double, fov(), "fov",       "field of view, degrees")
-//       EXTERNAL_FIELD_(double, aspect(), "aspect", "aspect ratio")
+//       EXTERNAL_FIELD_(double, self.fov(), "fov",       "field of view, degrees")
+//       EXTERNAL_FIELD_(double, self.aspect(), "aspect", "aspect ratio")
 //   END_EXTERNAL_STRUCT()
 //
 // BEGIN_EXTERNAL_STRUCT/END_EXTERNAL_STRUCT must be used at namespace scope
@@ -379,9 +379,7 @@ namespace structmapper {                                                      \
 
 #define EXTERNAL_FIELD_(TYPE, EXPR, NAME, DESC) \
                 , std::make_tuple([]() { \
-                    auto accessor = [](auto&& self) -> decltype(auto) { \
-                        return (std::forward<decltype(self)>(self).EXPR); \
-                    }; \
+                    auto accessor = [](auto&& self) -> decltype(auto) { return (EXPR); }; \
                     static_assert( \
                         ::structmapper::is_json_convertible<TYPE>::value, \
                         "structmapper: type of field expression " #EXPR " is not JSON-convertible" \

@@ -66,9 +66,9 @@ struct Vector {
 };
 
 BEGIN_EXTERNAL_STRUCT(Vector, "vector")
-    EXTERNAL_FIELD_(double, x(), "x", "x coordinate")
-    EXTERNAL_FIELD_(double, y(), "y", "y coordinate")
-    EXTERNAL_FIELD_(double, z(), "z", "z coordinate")
+    EXTERNAL_FIELD_(double, self.x(), "x", "x coordinate")
+    EXTERNAL_FIELD_(double, self.y(), "y", "y coordinate")
+    EXTERNAL_FIELD_(double, self.z(), "z", "z coordinate")
 END_EXTERNAL_STRUCT()
 
 struct Quaternion {
@@ -85,10 +85,10 @@ struct Quaternion {
 };
 
 BEGIN_EXTERNAL_STRUCT(Quaternion, "quaternion")
-    EXTERNAL_FIELD_(double, x(), "x", "x coordinate")
-    EXTERNAL_FIELD_(double, y(), "y", "y coordinate")
-    EXTERNAL_FIELD_(double, z(), "z", "z coordinate")
-    EXTERNAL_FIELD_(double, w(), "w", "w coordinate")
+    EXTERNAL_FIELD_(double, self.x(), "x", "x coordinate")
+    EXTERNAL_FIELD_(double, self.y(), "y", "y coordinate")
+    EXTERNAL_FIELD_(double, self.z(), "z", "z coordinate")
+    EXTERNAL_FIELD_(double, self.w(), "w", "w coordinate")
 END_EXTERNAL_STRUCT()
 
 struct Pose {
