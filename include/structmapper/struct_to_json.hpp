@@ -128,7 +128,7 @@ namespace structmapper {
         template <typename T>
         void to_json(const T& v, json& j);
 
-        void to_json(const json& v, json& j, std::true_type) {
+        inline void to_json(const json& v, json& j, std::true_type) {
             j = v;
         }
 
