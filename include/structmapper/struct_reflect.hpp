@@ -52,6 +52,7 @@
 // structmapper::visit_struct() can hand your visitor a real T&, exactly like the
 // visit_struct library.
 #pragma once
+#include <cstddef>
 #include <tuple>
 #include <utility>
 #include <functional>
@@ -64,6 +65,12 @@
 #include "structmapper/strenum.hpp"
 
 namespace structmapper {
+
+    template<class T>
+    using Ref = T&;
+
+    template<class T>
+    using ConstRef = const T&;
 
     // -----------------------------------------------------------------
     // External reflection registry.
@@ -114,6 +121,7 @@ namespace structmapper {
     //   - CompileTimeString<...>    (i.e. CTSTR("..."); serialized as its fixed value)
     //   - std::vector<U>            where U is itself json-convertible
     //   - std::array<U, N>          where U is itself json-convertible
+    //   - U[N]                      where U is itself json-convertible
     //   - std::map<std::string, U>  where U is itself json-convertible
     //   - a reflectable struct (has reflect_fields())
     // Containers recurse, so vector<map<string, vector<int>>> etc. all work.
@@ -130,8 +138,15 @@ namespace structmapper {
 
         template <typename T>
         struct is_std_array : std::false_type {};
-        template <typename T, size_t N>
+        template <typename T, std::size_t N>
         struct is_std_array<std::array<T, N>> : std::true_type {
+            using value_type = T;
+        };
+
+        template <typename T>
+        struct is_raw_array : std::false_type {};
+        template <typename T, std::size_t N>
+        struct is_raw_array<T[N]> : std::true_type {
             using value_type = T;
         };
 
@@ -182,19 +197,24 @@ namespace structmapper {
     template <typename T,
               bool IsVector = detail::is_std_vector<T>::value,
               bool IsArray = detail::is_std_array<T>::value,
+              bool IsRawArray = detail::is_raw_array<T>::value,
               bool IsStringMap = detail::is_std_string_map<T>::value>
     struct is_json_convertible_impl : detail::is_json_leaf<T> {};
 
     template <typename T>
-    struct is_json_convertible_impl<T, /*IsVector=*/true, /*IsArray=*/false, /*IsStringMap=*/false>
+    struct is_json_convertible_impl<T, /*IsVector=*/true, /*IsArray=*/false, /*IsRawArray=*/false, /*IsStringMap=*/false>
         : is_json_convertible<typename detail::is_std_vector<T>::value_type> {};
 
     template <typename T>
-    struct is_json_convertible_impl<T, /*IsVector=*/false, /*IsArray=*/true, /*IsStringMap=*/false>
+    struct is_json_convertible_impl<T, /*IsVector=*/false, /*IsArray=*/true, /*IsRawArray=*/false, /*IsStringMap=*/false>
         : is_json_convertible<typename detail::is_std_array<T>::value_type> {};
 
     template <typename T>
-    struct is_json_convertible_impl<T, /*IsVector=*/false, /*IsArray=*/false, /*IsStringMap=*/true>
+    struct is_json_convertible_impl<T, /*IsVector=*/false, /*IsArray=*/false, /*IsRawArray=*/true, /*IsStringMap=*/false>
+        : is_json_convertible<typename detail::is_raw_array<T>::value_type> {};
+
+    template <typename T>
+    struct is_json_convertible_impl<T, /*IsVector=*/false, /*IsArray=*/false, /*IsRawArray=*/false, /*IsStringMap=*/true>
         : is_json_convertible<typename detail::is_std_string_map<T>::value_type> {};
 
     template <typename T>
@@ -291,6 +311,12 @@ namespace structmapper {
     // for both mutable and const objects, and for both intrusively- and
     // externally-reflected classes.
     // ---------------------------------------------------------------------
+
+    // The declared field type of a visited value: strips reference and cv only,
+    // never decays, so double[3][3] stays double[3][3].
+    template <typename T>
+    using field_type_t = typename std::remove_cv<typename std::remove_reference<T>::type>::type;
+
     namespace detail {
 
         template <typename Class, typename Tuple, typename Visitor, std::size_t... I>
@@ -340,8 +366,9 @@ public:                                                                        \
 
 #define FIELD_(VAR, NAME, DESC)                                                \
             , std::make_tuple([]() { \
+                using FieldType = ::structmapper::field_type_t<decltype((std::declval<ReflectSelf&>().VAR))>; \
                 static_assert( \
-                    ::structmapper::is_json_convertible<decltype(std::declval<ReflectSelf>().VAR)>::value, \
+                    ::structmapper::is_json_convertible<FieldType>::value, \
                     "structmapper: type of field " #VAR " is not JSON-convertible" \
                 ); \
                 return ::structmapper::create_field_info<ReflectSelf>(NAME, DESC, &ReflectSelf::VAR); \
@@ -385,11 +412,11 @@ namespace structmapper {                                                      \
                         "structmapper: type of field expression " #EXPR " is not JSON-convertible" \
                     ); \
                     static_assert( \
-                        std::is_same<decltype(accessor(std::declval<ReflectSelf&>())), TYPE&>::value, \
+                        std::is_convertible<decltype(accessor(std::declval<ReflectSelf&>())), Ref<TYPE>>::value, \
                         "structmapper: external field expression " #EXPR " must return reference of " #TYPE \
                     ); \
                     static_assert( \
-                        std::is_same<decltype(accessor(std::declval<const ReflectSelf&>())), const TYPE&>::value, \
+                        std::is_convertible<decltype(accessor(std::declval<const ReflectSelf&>())), ConstRef<TYPE>>::value, \
                         "structmapper: external field expression " #EXPR " must return const reference of " #TYPE \
                     ); \
                     return ::structmapper::ExternalFieldInfo<ReflectSelf, TYPE>{ \

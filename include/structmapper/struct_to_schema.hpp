@@ -46,6 +46,7 @@
 #include <string>
 #include <typeindex>
 #include <cctype>
+#include <cstddef>
 #if defined(__GNUG__)
 #include <cstdlib>
 #include <cxxabi.h>
@@ -202,8 +203,16 @@ namespace structmapper {
             }
         };
 
-        template <typename T, size_t N>
+        template <typename T, std::size_t N>
         struct CountTraits<std::array<T, N>> {
+            static void count(const std::map<std::type_index, std::string>& ext_refs,
+                               std::map<std::type_index, int>& counts) {
+                count_types<T>(ext_refs, counts);
+            }
+        };
+
+        template <typename T, std::size_t N>
+        struct CountTraits<T[N]> {
             static void count(const std::map<std::type_index, std::string>& ext_refs,
                                std::map<std::type_index, int>& counts) {
                 count_types<T>(ext_refs, counts);
@@ -229,7 +238,7 @@ namespace structmapper {
                 if (counts[key] >= 2) return; // already visited
                 T default_obj{};
                 visit_struct(default_obj, [&](const char*, const auto& value, const char*) {
-                    using FieldType = typename std::decay<decltype(value)>::type;
+                    using FieldType = ::structmapper::field_type_t<decltype(value)>;
                     count_types<FieldType>(ext_refs, counts);
                 });
             }
@@ -238,7 +247,7 @@ namespace structmapper {
         template <typename T>
         void count_types(const std::map<std::type_index, std::string>& ext_refs,
                           std::map<std::type_index, int>& counts) {
-            using Bare = typename std::decay<T>::type;
+            using Bare = ::structmapper::field_type_t<T>;
             CountTraits<Bare>::count(ext_refs, counts);
         }
 
@@ -266,8 +275,22 @@ namespace structmapper {
         };
 
         // array<T, N> -> array
-        template <typename T, size_t N>
+        template <typename T, std::size_t N>
         struct SchemaTraits<std::array<T, N>> {
+            static nlohmann::json get(SchemaRefs& ctx) {
+                nlohmann::json j;
+                j["type"] = "array";
+                j["items"] = type_schema<T>(ctx);
+                j["minItems"] = N;
+                j["maxItems"] = N;
+                return j;
+            }
+            static constexpr bool is_scalar = false;
+        };
+
+        // T[N] -> array
+        template <typename T, std::size_t N>
+        struct SchemaTraits<T[N]> {
             static nlohmann::json get(SchemaRefs& ctx) {
                 nlohmann::json j;
                 j["type"] = "array";
@@ -319,7 +342,7 @@ namespace structmapper {
         //   - else: the plain inline schema, as in the original code.
         template <typename T>
         nlohmann::json type_schema(SchemaRefs& ctx) {
-            using Bare = typename std::decay<T>::type;
+            using Bare = ::structmapper::field_type_t<T>;
 
             if (is_reflectable<Bare>::value) {
                 std::type_index key(typeid(Bare));
@@ -357,7 +380,7 @@ namespace structmapper {
 
         template <typename T>
         nlohmann::json field_schema(const T& default_value, const char* desc, SchemaRefs& ctx) {
-            using Bare = typename std::decay<T>::type;
+            using Bare = ::structmapper::field_type_t<T>;
             nlohmann::json j = type_schema<Bare>(ctx);
 
             if (is_reflectable<Bare>::value) {

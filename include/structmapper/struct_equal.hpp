@@ -105,7 +105,7 @@ namespace structmapper {
                 visit_struct(a, b,
                     [&result](const char* /*name*/, const auto& x, const auto& y, const char* /*desc*/) {
                         if (!result) return; // already unequal, skip the rest
-                        using F = typename std::decay<decltype(x)>::type;
+                        using F = ::structmapper::field_type_t<decltype(x)>;
                         result = DeepEqual<F>::eq(x, y);
                     });
                 return result;
@@ -155,6 +155,17 @@ namespace structmapper {
         template <typename U, std::size_t N>
         struct DeepEqual<std::array<U, N>, void> {
             using T = std::array<U, N>;
+            static bool eq(const T& a, const T& b) {
+                for (std::size_t i = 0; i < N; ++i) {
+                    if (!DeepEqual<U>::eq(a[i], b[i])) return false;
+                }
+                return true;
+            }
+        };
+
+        template <typename U, std::size_t N>
+        struct DeepEqual<U[N], void> {
+            using T = U[N];
             static bool eq(const T& a, const T& b) {
                 for (std::size_t i = 0; i < N; ++i) {
                     if (!DeepEqual<U>::eq(a[i], b[i])) return false;

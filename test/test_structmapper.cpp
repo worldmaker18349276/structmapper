@@ -101,6 +101,26 @@ struct Pose {
     END_STRUCT()
 };
 
+struct Matrix3x3 {
+    double data[3][3];
+
+    BEGIN_STRUCT("3x3 matrix")
+        FIELD(data, "data")
+    END_STRUCT()
+};
+
+struct EMatrix3x3 {
+    double data[9];
+};
+
+struct WithExternalMatrix3x3 {
+    EMatrix3x3 mat;
+};
+
+BEGIN_EXTERNAL_STRUCT(WithExternalMatrix3x3, "with external matrix")
+    EXTERNAL_FIELD_(double[3][3], *const_cast<double(*)[3][3]>(reinterpret_cast<const double(*)[3][3]>(&self.mat.data[0])), "mat", "matrix 3x3")
+END_EXTERNAL_STRUCT()
+
 // // .../test_structmapper.cpp:53:9:   required from here
 // // .../struct_reflect.hpp:123:47: error: static assertion failed: ...
 // struct Sensors {
@@ -273,6 +293,96 @@ TEST(StructToJson, WithExternalType) {
     json expected = {
         {"position", {{"x", 0.0}, {"y", 0.0}, {"z", 1.0}}},
         {"orientation", {{"x", 0.5}, {"y", -0.5}, {"z", 0.5}, {"w", -0.5}}},
+    };
+
+    EXPECT_EQ(j, expected);
+}
+
+TEST(StructToJson, RawArray) {
+    Matrix3x3 mat{
+        {
+            {0.0, 0.0, 1.0},
+            {-1.0, 0.0, 0.0},
+            {0.0, -1.0, 0.0},
+        }
+    };
+
+    json j = structmapper::convert_to_json(mat);
+    json expected = {
+        {"data", 
+            json::array({
+                {0.0, 0.0, 1.0},
+                {-1.0, 0.0, 0.0},
+                {0.0, -1.0, 0.0},
+            })
+        },
+    };
+
+    EXPECT_EQ(j, expected);
+}
+
+TEST(StructToJson, RawArrayEq) {
+    Matrix3x3 mat1{
+        {
+            {0.0, 0.0, 1.0},
+            {-1.0, 0.0, 0.0},
+            {0.0, -1.0, 0.0},
+        }
+    };
+
+    Matrix3x3 mat2{
+        {
+            {0.0, 0.0, 1.0},
+            {-1.0, 0.0, 0.0},
+            {0.0, -0.9, 0.0},
+        }
+    };
+
+    EXPECT_TRUE(structmapper::struct_equal<Matrix3x3>(mat1, mat1));
+    EXPECT_FALSE(structmapper::struct_equal<Matrix3x3>(mat1, mat2));
+}
+
+TEST(StructToJson, RawArraySchema) {
+    json schema = structmapper::to_schema<Matrix3x3>();
+    json expect = {
+        {"description", "3x3 matrix"},
+        {"properties", {
+            {"data", {
+                {"description", "data"},
+                {"items", {
+                    {"items", {
+                        {"type", "number"}
+                    }},
+                    {"maxItems", 3},
+                    {"minItems", 3},
+                    {"type", "array"}
+                }},
+                {"maxItems", 3},
+                {"minItems", 3},
+                {"type", "array"}
+            }}
+        }},
+        {"type", "object"}
+    };
+
+    EXPECT_EQ(schema, expect);
+}
+
+
+TEST(StructToJson, WithExternalRawArray) {
+    WithExternalMatrix3x3 mat;
+    for (int i = 0; i < 9; i++)
+        mat.mat.data[i] = i;
+
+    json j = structmapper::convert_to_json(mat);
+    json expected = {
+        {"mat", 
+            json::array({
+                {0.0, 1.0, 2.0},
+                {3.0, 4.0, 5.0},
+                {6.0, 7.0, 8.0},
+            })
+        },
     };
 
     EXPECT_EQ(j, expected);
