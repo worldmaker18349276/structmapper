@@ -33,8 +33,8 @@
 //   };
 //
 //   BEGIN_EXTERNAL_STRUCT(ThirdPartyCamera, "camera parameters")
-//       EXTERNAL_FIELD_(double, self.fov(), "fov",       "field of view, degrees")
-//       EXTERNAL_FIELD_(double, self.aspect(), "aspect", "aspect ratio")
+//       FIELD_EXPR_NAMED(double, self.fov(), "fov",       "field of view, degrees")
+//       FIELD_EXPR_NAMED(double, self.aspect(), "aspect", "aspect ratio")
 //   END_EXTERNAL_STRUCT()
 //
 // BEGIN_EXTERNAL_STRUCT/END_EXTERNAL_STRUCT must be used at namespace scope
@@ -365,6 +365,16 @@ namespace structmapper {
                             std::make_index_sequence<std::tuple_size<decltype(fields)>::value>{});
     }
 
+    // Reinterpret an object's storage as To, keeping its constness.
+    // Typical use: view a flat double[9] as double[3][3].
+    template <typename To, typename From>
+    typename std::conditional<std::is_const<From>::value, const To, To>::type&
+    view_as(From& from) {
+        static_assert(sizeof(To) == sizeof(From), "structmapper::view_as: size mismatch");
+        using Ptr = typename std::conditional<std::is_const<From>::value, const To, To>::type*;
+        return *reinterpret_cast<Ptr>(&from);
+    }
+
 } // namespace structmapper
 
 // ---------------------------------------------------------------------
@@ -382,7 +392,7 @@ public:                                                                        \
         static const auto fields_ = std::tuple_cat(                            \
             std::tuple<>{}
 
-#define FIELD_(VAR, NAME, DESC)                                                \
+#define FIELD_NAMED(VAR, NAME, DESC)                                           \
             , std::make_tuple([]() { \
                 using FieldType = ::structmapper::field_type_t<decltype((std::declval<ReflectSelf&>().VAR))>; \
                 static_assert( \
@@ -392,7 +402,7 @@ public:                                                                        \
                 return ::structmapper::create_field_info<ReflectSelf>(NAME, DESC, &ReflectSelf::VAR); \
             }())
 
-#define FIELD(VAR, DESC) FIELD_(VAR, #VAR, DESC)
+#define FIELD(VAR, DESC) FIELD_NAMED(VAR, #VAR, DESC)
 
 #define END_STRUCT()                                                           \
         );                                                                     \
@@ -422,7 +432,7 @@ namespace structmapper {                                                      \
             static const auto fields_ = std::tuple_cat(                       \
                 std::tuple<>{}
 
-#define EXTERNAL_FIELD_(TYPE, EXPR, NAME, DESC) \
+#define FIELD_EXPR_NAMED(TYPE, EXPR, NAME, DESC) \
                 , std::make_tuple([]() { \
                     auto accessor = [](auto&& self) -> decltype(auto) { return (EXPR); }; \
                     static_assert( \
@@ -430,11 +440,11 @@ namespace structmapper {                                                      \
                         "structmapper: type of field expression " #EXPR " is not JSON-convertible" \
                     ); \
                     static_assert( \
-                        std::is_convertible<decltype(accessor(std::declval<ReflectSelf&>())), Ref<TYPE>>::value, \
+                        std::is_convertible<decltype(accessor(std::declval<ReflectSelf&>())), ::structmapper::Ref<TYPE>>::value, \
                         "structmapper: external field expression " #EXPR " must return reference of " #TYPE \
                     ); \
                     static_assert( \
-                        std::is_convertible<decltype(accessor(std::declval<const ReflectSelf&>())), ConstRef<TYPE>>::value, \
+                        std::is_convertible<decltype(accessor(std::declval<const ReflectSelf&>())), ::structmapper::ConstRef<TYPE>>::value, \
                         "structmapper: external field expression " #EXPR " must return const reference of " #TYPE \
                     ); \
                     return ::structmapper::ExternalFieldInfo<ReflectSelf, TYPE>{ \

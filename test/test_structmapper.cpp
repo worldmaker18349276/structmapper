@@ -66,9 +66,9 @@ struct Vector {
 };
 
 BEGIN_EXTERNAL_STRUCT(Vector, "vector")
-    EXTERNAL_FIELD_(double, self.x(), "x", "x coordinate")
-    EXTERNAL_FIELD_(double, self.y(), "y", "y coordinate")
-    EXTERNAL_FIELD_(double, self.z(), "z", "z coordinate")
+    FIELD_EXPR_NAMED(double, self.x(), "x", "x coordinate")
+    FIELD_EXPR_NAMED(double, self.y(), "y", "y coordinate")
+    FIELD_EXPR_NAMED(double, self.z(), "z", "z coordinate")
 END_EXTERNAL_STRUCT()
 
 struct Quaternion {
@@ -85,10 +85,10 @@ struct Quaternion {
 };
 
 BEGIN_EXTERNAL_STRUCT(Quaternion, "quaternion")
-    EXTERNAL_FIELD_(double, self.x(), "x", "x coordinate")
-    EXTERNAL_FIELD_(double, self.y(), "y", "y coordinate")
-    EXTERNAL_FIELD_(double, self.z(), "z", "z coordinate")
-    EXTERNAL_FIELD_(double, self.w(), "w", "w coordinate")
+    FIELD_EXPR_NAMED(double, self.x(), "x", "x coordinate")
+    FIELD_EXPR_NAMED(double, self.y(), "y", "y coordinate")
+    FIELD_EXPR_NAMED(double, self.z(), "z", "z coordinate")
+    FIELD_EXPR_NAMED(double, self.w(), "w", "w coordinate")
 END_EXTERNAL_STRUCT()
 
 struct Pose {
@@ -115,11 +115,11 @@ struct EMatrix3x3 {
 
 struct WithExternalMatrix3x3 {
     EMatrix3x3 mat;
-};
 
-BEGIN_EXTERNAL_STRUCT(WithExternalMatrix3x3, "with external matrix")
-    EXTERNAL_FIELD_(double[3][3], *const_cast<double(*)[3][3]>(reinterpret_cast<const double(*)[3][3]>(&self.mat.data[0])), "mat", "matrix 3x3")
-END_EXTERNAL_STRUCT()
+    BEGIN_STRUCT("with external matrix")
+        FIELD_EXPR_NAMED(double[3][3], structmapper::view_as<double[3][3]>(self.mat.data), "mat", "matrix 3x3")
+    END_STRUCT()
+};
 
 // // .../test_structmapper.cpp:53:9:   required from here
 // // .../struct_reflect.hpp:123:47: error: static assertion failed: ...
