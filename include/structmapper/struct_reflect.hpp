@@ -306,7 +306,7 @@ namespace structmapper {
     }
 
     // ---------------------------------------------------------------------
-    // visit_struct: call visitor(name, value_ref, desc) for every field, in
+    // visit_struct: call visitor(name, value_ref, desc, type_tag) for every field, in
     // declaration order, with the *real* field type (not type-erased). Works
     // for both mutable and const objects, and for both intrusively- and
     // externally-reflected classes.
@@ -317,22 +317,39 @@ namespace structmapper {
     template <typename T>
     using field_type_t = typename std::remove_cv<typename std::remove_reference<T>::type>::type;
 
+    // Empty tag carrying a type. Lets a generic lambda receive the field type
+    // as a real parameter: `decltype(tag)::type`.
+    template <typename T>
+    struct type_tag { using type = T; };
+
     namespace detail {
 
         template <typename Class, typename Tuple, typename Visitor, std::size_t... I>
         void visit_impl(Class& obj, const Tuple& fields, Visitor&& visitor, std::index_sequence<I...>) {
             using expand = int[];
-            (void)expand{0, (visitor(std::get<I>(fields).name, std::get<I>(fields).get(obj), std::get<I>(fields).desc), 0)...};
+            (void)expand{0, (visitor(
+                std::get<I>(fields).name,
+                std::get<I>(fields).get(obj),
+                std::get<I>(fields).desc,
+                type_tag<typename std::tuple_element<I, Tuple>::type::value_type>{}
+            ), 0)...};
         }
 
         template <typename Class, typename Tuple, typename Visitor, std::size_t... I>
         void visit_impl(Class& obj1, Class& obj2, const Tuple& fields, Visitor&& visitor, std::index_sequence<I...>) {
             using expand = int[];
-            (void)expand{0, (visitor(std::get<I>(fields).name, std::get<I>(fields).get(obj1), std::get<I>(fields).get(obj2), std::get<I>(fields).desc), 0)...};
+            (void)expand{0, (visitor(
+                std::get<I>(fields).name,
+                std::get<I>(fields).get(obj1),
+                std::get<I>(fields).get(obj2),
+                std::get<I>(fields).desc,
+                type_tag<typename std::tuple_element<I, Tuple>::type::value_type>{}
+            ), 0)...};
         }
 
     } // namespace detail
 
+    // visitor(name, value_ref, desc, type_tag<FieldType>)
     template <typename Class, typename Visitor>
     void visit_struct(Class& obj, Visitor&& visitor) {
         const auto fields = reflect_fields(obj);
@@ -340,6 +357,7 @@ namespace structmapper {
                             std::make_index_sequence<std::tuple_size<decltype(fields)>::value>{});
     }
 
+    // visitor(name, value_ref1, value_ref2, desc, type_tag<FieldType>)
     template <typename Class, typename Visitor>
     void visit_struct(Class& obj1, Class& obj2, Visitor&& visitor) {
         const auto fields = reflect_fields(obj1);

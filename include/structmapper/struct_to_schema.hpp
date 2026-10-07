@@ -237,8 +237,8 @@ namespace structmapper {
                 counts[key]++;
                 if (counts[key] >= 2) return; // already visited
                 T default_obj{};
-                visit_struct(default_obj, [&](const char*, const auto& value, const char*) {
-                    using FieldType = ::structmapper::field_type_t<decltype(value)>;
+                visit_struct(default_obj, [&](const char*, const auto& value, const char*, auto tag) {
+                    using FieldType = typename decltype(tag)::type;
                     count_types<FieldType>(ext_refs, counts);
                 });
             }
@@ -324,7 +324,7 @@ namespace structmapper {
 
                 nlohmann::json props = nlohmann::json::object();
                 T default_obj{}; // value-initialized: gives every field a concrete default
-                visit_struct(default_obj, [&](const char* name, const auto& value, const char* desc) {
+                visit_struct(default_obj, [&](const char* name, const auto& value, const char* desc, auto tag) {
                     props[name] = field_schema(value, desc, ctx);
                 });
                 j["properties"] = std::move(props);

@@ -196,7 +196,7 @@ namespace structmapper {
         typename std::enable_if<is_reflectable<T>::value>::type
         to_json(const T& obj, json& j, std::false_type) {
             j = json::object();
-            visit_struct(obj, [&](const char* name, const auto& value, const char* /*desc*/) {
+            visit_struct(obj, [&](const char* name, const auto& value, const char* /*desc*/, auto tag) {
                 json vj;
                 ::structmapper::detail::to_json(value, vj);
                 j[name] = std::move(vj);
@@ -415,7 +415,7 @@ namespace structmapper {
             }
 
             std::vector<std::string> known_fields;
-            visit_struct(out, [&](const char* name, auto& value, const char* /*desc*/) {
+            visit_struct(out, [&](const char* name, auto& value, const char* /*desc*/, auto tag) {
                 const std::string field_path = path + "." + name;
                 known_fields.push_back(name);
 

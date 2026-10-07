@@ -103,9 +103,9 @@ namespace structmapper {
                 // have const overloads, so the visitor receives const refs of
                 // the real field types.
                 visit_struct(a, b,
-                    [&result](const char* /*name*/, const auto& x, const auto& y, const char* /*desc*/) {
+                    [&result](const char* /*name*/, const auto& x, const auto& y, const char* /*desc*/, auto tag) {
                         if (!result) return; // already unequal, skip the rest
-                        using F = ::structmapper::field_type_t<decltype(x)>;
+                        using F = typename decltype(tag)::type;
                         result = DeepEqual<F>::eq(x, y);
                     });
                 return result;
