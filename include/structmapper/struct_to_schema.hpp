@@ -110,7 +110,13 @@ namespace structmapper {
         // integers (excluding bool, which is handled above)
         template <typename T>
         struct SchemaTraits<T, typename std::enable_if<std::is_integral<T>::value && !std::is_same<T, bool>::value>::type> {
-            static nlohmann::json get(SchemaRefs&) { return {{"type", "integer"}}; }
+            static nlohmann::json get(SchemaRefs&) {
+                return {
+                    {"type", "integer"},
+                    {"minimum", std::numeric_limits<T>::min()},
+                    {"maximum", std::numeric_limits<T>::max()},
+                };
+            }
             static constexpr bool is_scalar = true;
         };
 

@@ -113,11 +113,13 @@ struct EMatrix3x3 {
     double data[9];
 };
 
+#define FIELD_EMatrix3x3(VAR, DESC) FIELD_EXPR_NAMED(double[3][3], ::structmapper::view_as<double[3][3]>(self.VAR.data), #VAR, DESC)
+
 struct WithExternalMatrix3x3 {
     EMatrix3x3 mat;
 
     BEGIN_STRUCT("with external matrix")
-        FIELD_EXPR_NAMED(double[3][3], structmapper::view_as<double[3][3]>(self.mat.data), "mat", "matrix 3x3")
+        FIELD_EMatrix3x3(mat, "matrix 3x3")
     END_STRUCT()
 };
 
@@ -626,7 +628,9 @@ TEST(ToSchema, Schema) {
             {"buffer_size", {
                 {"default", 10},
                 {"description", "buffer size"},
-                {"type", "integer"}
+                {"type", "integer"},
+                {"maximum", 4294967295},
+                {"minimum", 0},
             }},
             {"enabled", {
                 {"default", true},
@@ -649,7 +653,9 @@ TEST(ToSchema, Schema) {
                 {"default", {1920, 1080}},
                 {"description", "pixel resolution [w,h]"},
                 {"items", {
-                    {"type", "integer"}
+                    {"type", "integer"},
+                    {"maximum", 2147483647},
+                    {"minimum", -2147483648}
                 }},
                 {"minItems", 2},
                 {"maxItems", 2},
@@ -662,7 +668,9 @@ TEST(ToSchema, Schema) {
                         {"properties", {
                             {"id", {
                                 {"description", "socket id"},
-                                {"type", "integer"}
+                                {"type", "integer"},
+                                {"maximum", 2147483647},
+                                {"minimum", -2147483648}
                             }},
                             {"name", {
                                 {"default", "unset"},
@@ -677,7 +685,9 @@ TEST(ToSchema, Schema) {
             }},
             {"tags", {
                 {"additionalProperties", {
-                    {"type", "integer"}
+                    {"type", "integer"},
+                    {"maximum", 2147483647},
+                    {"minimum", -2147483648}
                 }},
                 {"description", "arbitrary string->int tags"},
                 {"type", "object"}
