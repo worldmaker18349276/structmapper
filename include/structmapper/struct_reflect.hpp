@@ -24,27 +24,27 @@
 //
 //   struct ThirdPartyCamera {
 //       double fov_ = 60.0;
-//       double aspect_ = 1.777;
+//       shared_ptr<double> aspect_ = 1.777;
+//       std::array<int, 2> resolution_ = {1920, 1080};
 // 
 //       double& fov() { return fov_; }
 //       const double& fov() const { return fov_; }
-//       double& aspect() { return aspect_; }
-//       const double& aspect() const { return aspect_; }
+//       FieldProxy<int> resolution() { ... }
+//       FieldProxy<const int> resolution() const { ... }
 //   };
 //
 //   BEGIN_EXTERNAL_STRUCT(ThirdPartyCamera, "camera parameters")
-//       FIELD_EXPR_NAMED(double, self.fov(), "fov",       "field of view, degrees")
-//       FIELD_EXPR_NAMED(double, self.aspect(), "aspect", "aspect ratio")
+//       FIELD_EXPR_NAMED(double, &self.fov(),       "fov",    "field of view, degrees")
+//       FIELD_EXPR_NAMED(double, self.aspect_,      "aspect", "aspect ratio")             // shared_ptr<double> member
+//       FIELD_EXPR_NAMED(double, self.resolution(), "resolution", "resolution of image")  // custom proxy
 //   END_EXTERNAL_STRUCT()
 //
-// BEGIN_EXTERNAL_STRUCT/END_EXTERNAL_STRUCT must be used at namespace scope
-// (not inside a function or class), and all reflected members must be
-// accessible from outside the class (public, or you've friended
-// structmapper::ExternalReflectTraits<ThirdPartyCamera>). Once registered,
-// ThirdPartyCamera works everywhere a BEGIN_STRUCT type does:
-// is_reflectable<ThirdPartyCamera>::value is true, structmapper::visit_struct()
-// works on it, and it's accepted as a nested field type / vector element /
-// map value, exactly like an intrusively-reflected struct.
+// EXPR is evaluated per call and its result is returned BY VALUE. It must be a
+// pointer-like object (raw pointer, shared_ptr, or a proxy with operator*) whose
+// operator* yields TYPE& for a non-const self and something convertible to
+// const TYPE& for a const self. visit_struct keeps the object alive for the
+// duration of the visitor call, so a proxy can own temporaries the field refers
+// to. Null is invalid (asserted for types convertible to bool).
 //
 // reflect_fields() returns a std::tuple of FieldInfo<Class, T> - one
 // strongly-typed entry per field, holding a pointer-to-member, a name, and
@@ -61,16 +61,11 @@
 #include <vector>
 #include <array>
 #include <map>
+#include <cassert>
 #include <nlohmann/json.hpp>
 #include "structmapper/strenum.hpp"
 
 namespace structmapper {
-
-    template<class T>
-    using Ref = T&;
-
-    template<class T>
-    using ConstRef = const T&;
 
     // -----------------------------------------------------------------
     // External reflection registry.
@@ -232,8 +227,8 @@ namespace structmapper {
         const char* desc;
         T Class::*member;
 
-        T&       get(Class& obj)       const { return obj.*member; }
-        const T& get(const Class& obj) const { return obj.*member; }
+        T*       get(Class& obj)       const { return &(obj.*member); }
+        const T* get(const Class& obj) const { return &(obj.*member); }
 
         using value_type = T;
         using class_type = Class;
@@ -244,15 +239,17 @@ namespace structmapper {
         return FieldInfo<Class, T>{name, desc, member};
     }
 
-    template <typename Class, typename T>
-    struct ExternalFieldInfo {
+    template <typename Class, typename T,
+                typename P  = T*,          // what accessor returns for Class&
+                typename CP = const T*>    // what accessor returns for const Class&
+    struct ExprFieldInfo {
         const char* name;
         const char* desc;
-        std::function<T&(Class&)> accessor;
-        std::function<const T&(const Class&)> const_accessor;
+        std::function<P(Class&)> accessor;
+        std::function<CP(const Class&)> const_accessor;
 
-        T&       get(Class& obj)       const { return accessor(obj); }
-        const T& get(const Class& obj) const { return const_accessor(obj); }
+        P  get(Class& obj)       const { return accessor(obj); }
+        CP get(const Class& obj) const { return const_accessor(obj); }
 
         using value_type = T;
         using class_type = Class;
@@ -270,33 +267,29 @@ namespace structmapper {
     namespace detail {
 
         template <typename T>
-        auto reflect_fields_dispatch(const T& obj, std::true_type /*intrusive*/)
-            -> decltype(obj.reflect_fields()) {
+        decltype(auto) reflect_fields_dispatch(const T& obj, std::true_type /*intrusive*/) {
             return obj.reflect_fields();
         }
 
         template <typename T>
-        auto reflect_fields_dispatch(const T&, std::false_type /*intrusive*/)
-            -> decltype(ExternalReflectTraits<T>::fields()) {
+        decltype(auto) reflect_fields_dispatch(const T&, std::false_type /*intrusive*/) {
             return ExternalReflectTraits<T>::fields();
         }
 
         template <typename T>
-        auto reflect_struct_desc_dispatch(std::true_type /*intrusive*/) -> decltype(T::reflect_struct_desc()) {
+        const char* reflect_struct_desc_dispatch(std::true_type /*intrusive*/) {
             return T::reflect_struct_desc();
         }
 
         template <typename T>
-        auto reflect_struct_desc_dispatch(std::false_type /*intrusive*/)
-            -> decltype(ExternalReflectTraits<T>::reflect_struct_desc()) {
+        const char* reflect_struct_desc_dispatch(std::false_type /*intrusive*/) {
             return ExternalReflectTraits<T>::reflect_struct_desc();
         }
 
     } // namespace detail
 
     template <typename T>
-    auto reflect_fields(const T& obj)
-        -> decltype(detail::reflect_fields_dispatch(obj, std::integral_constant<bool, is_intrusively_reflectable<T>::value>{})) {
+    decltype(auto) reflect_fields(const T& obj) {
         return detail::reflect_fields_dispatch(obj, std::integral_constant<bool, is_intrusively_reflectable<T>::value>{});
     }
 
@@ -324,27 +317,42 @@ namespace structmapper {
 
     namespace detail {
 
+        // Null is invalid. Checked only for types explicitly convertible to bool
+        // (raw/smart pointers); proxy types without that conversion are skipped.
+        // The second parameter is required by C++14.
+        template <typename P>
+        auto check_valid(const P& p, int) -> decltype(static_cast<bool>(p), void()) {
+            assert(static_cast<bool>(p) && "structmapper: field accessor returned a null pointer");
+        }
+        template <typename P>
+        void check_valid(const P&, long) {}
+
+        template <typename Field, typename Class, typename Visitor>
+        void visit_one(const Field& f, Class& obj, Visitor&& visitor) {
+            auto p = f.get(obj);              // lives until the visitor returns
+            check_valid(p, 0);
+            visitor(f.name, *p, f.desc, type_tag<typename Field::value_type>{});
+        }
+
+        template <typename Field, typename Class, typename Visitor>
+        void visit_one(const Field& f, Class& obj1, Class& obj2, Visitor&& visitor) {
+            auto p1 = f.get(obj1);
+            auto p2 = f.get(obj2);
+            check_valid(p1, 0);
+            check_valid(p2, 0);
+            visitor(f.name, *p1, *p2, f.desc, type_tag<typename Field::value_type>{});
+        }
+
         template <typename Class, typename Tuple, typename Visitor, std::size_t... I>
         void visit_impl(Class& obj, const Tuple& fields, Visitor&& visitor, std::index_sequence<I...>) {
             using expand = int[];
-            (void)expand{0, (visitor(
-                std::get<I>(fields).name,
-                std::get<I>(fields).get(obj),
-                std::get<I>(fields).desc,
-                type_tag<typename std::tuple_element<I, Tuple>::type::value_type>{}
-            ), 0)...};
+            (void)expand{0, (visit_one(std::get<I>(fields), obj, visitor), 0)...};
         }
 
         template <typename Class, typename Tuple, typename Visitor, std::size_t... I>
         void visit_impl(Class& obj1, Class& obj2, const Tuple& fields, Visitor&& visitor, std::index_sequence<I...>) {
             using expand = int[];
-            (void)expand{0, (visitor(
-                std::get<I>(fields).name,
-                std::get<I>(fields).get(obj1),
-                std::get<I>(fields).get(obj2),
-                std::get<I>(fields).desc,
-                type_tag<typename std::tuple_element<I, Tuple>::type::value_type>{}
-            ), 0)...};
+            (void)expand{0, (visit_one(std::get<I>(fields), obj1, obj2, visitor), 0)...};
         }
 
     } // namespace detail
@@ -352,17 +360,19 @@ namespace structmapper {
     // visitor(name, value_ref, desc, type_tag<FieldType>)
     template <typename Class, typename Visitor>
     void visit_struct(Class& obj, Visitor&& visitor) {
-        const auto fields = reflect_fields(obj);
+        const auto& fields = reflect_fields(obj);
+        using Tuple = typename std::remove_cv<typename std::remove_reference<decltype(fields)>::type>::type;
         detail::visit_impl(obj, fields, std::forward<Visitor>(visitor),
-                            std::make_index_sequence<std::tuple_size<decltype(fields)>::value>{});
+                        std::make_index_sequence<std::tuple_size<Tuple>::value>{});
     }
 
     // visitor(name, value_ref1, value_ref2, desc, type_tag<FieldType>)
     template <typename Class, typename Visitor>
     void visit_struct(Class& obj1, Class& obj2, Visitor&& visitor) {
-        const auto fields = reflect_fields(obj1);
+        const auto& fields = reflect_fields(obj1);
+        using Tuple = typename std::remove_cv<typename std::remove_reference<decltype(fields)>::type>::type;
         detail::visit_impl(obj1, obj2, fields, std::forward<Visitor>(visitor),
-                            std::make_index_sequence<std::tuple_size<decltype(fields)>::value>{});
+                        std::make_index_sequence<std::tuple_size<Tuple>::value>{});
     }
 
     // Reinterpret an object's storage as To, keeping its constness.
@@ -433,24 +443,19 @@ namespace structmapper {                                                      \
                 std::tuple<>{}
 
 #define FIELD_EXPR_NAMED(TYPE, EXPR, NAME, DESC) \
-                , std::make_tuple([]() { \
-                    auto accessor = [](auto&& self) -> decltype(auto) { return (EXPR); }; \
-                    static_assert( \
-                        ::structmapper::is_json_convertible<TYPE>::value, \
-                        "structmapper: type of field expression " #EXPR " is not JSON-convertible" \
-                    ); \
-                    static_assert( \
-                        std::is_convertible<decltype(accessor(std::declval<ReflectSelf&>())), ::structmapper::Ref<TYPE>>::value, \
-                        "structmapper: external field expression " #EXPR " must return reference of " #TYPE \
-                    ); \
-                    static_assert( \
-                        std::is_convertible<decltype(accessor(std::declval<const ReflectSelf&>())), ::structmapper::ConstRef<TYPE>>::value, \
-                        "structmapper: external field expression " #EXPR " must return const reference of " #TYPE \
-                    ); \
-                    return ::structmapper::ExternalFieldInfo<ReflectSelf, TYPE>{ \
-                        NAME, DESC, accessor, accessor \
-                    }; \
-                }())
+    , std::make_tuple([]() { \
+        using FieldType = TYPE; \
+        auto accessor = [](auto&& self) { return (EXPR); }; \
+        using P  = decltype(accessor(std::declval<ReflectSelf&>())); \
+        using CP = decltype(accessor(std::declval<const ReflectSelf&>())); \
+        static_assert(::structmapper::is_json_convertible<FieldType>::value, \
+                      "structmapper: type of field expression " #EXPR " is not JSON-convertible"); \
+        static_assert(std::is_convertible<decltype(*std::declval<P&>()), FieldType&>::value, \
+                      "structmapper: " #EXPR " must yield a pointer-like object whose operator* gives " #TYPE "&"); \
+        static_assert(std::is_convertible<decltype(*std::declval<CP&>()), const FieldType&>::value, \
+                      "structmapper: " #EXPR " (const self) must yield a pointer-like object whose operator* gives const " #TYPE "&"); \
+        return ::structmapper::ExprFieldInfo<ReflectSelf, FieldType, P, CP>{NAME, DESC, accessor, accessor}; \
+    }())
 
 #define END_EXTERNAL_STRUCT()                                                 \
             );                                                                \
