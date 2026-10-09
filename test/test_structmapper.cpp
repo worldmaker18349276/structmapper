@@ -115,11 +115,19 @@ struct EMatrix3x3 {
 
 #define FIELD_EMatrix3x3(VAR, DESC) FIELD_EXPR_NAMED(&::structmapper::view_as<double[3][3]>(self.VAR.data), #VAR, DESC)
 
-struct WithExternalMatrix3x3 {
+struct WithExpr {
     EMatrix3x3 mat;
+    int width_ = 1920;
+    int height_ = 1080;
 
-    BEGIN_STRUCT("with external matrix")
+    std::array<int, 2> get_resolution() const { return {width_, height_}; }
+    void set_resolution(const std::array<int, 2>& v) { width_ = v[0]; height_ = v[1]; }
+    auto resolution_proxy() const { return structmapper::proxy(get_resolution()); }
+    auto resolution_proxy() { return structmapper::proxy(get_resolution(), [this](const auto& v){ set_resolution(v); }); }
+
+    BEGIN_STRUCT("with complex fields requiring expr accessor")
         FIELD_EMatrix3x3(mat, "matrix 3x3")
+        FIELD_EXPR_NAMED(self.resolution_proxy(), "resolution", "resolution")
     END_STRUCT()
 };
 
@@ -371,12 +379,14 @@ TEST(StructToJson, RawArraySchema) {
 }
 
 
-TEST(StructToJson, WithExternalRawArray) {
-    WithExternalMatrix3x3 mat;
+TEST(StructToJson, WithFieldExpr) {
+    WithExpr obj;
     for (int i = 0; i < 9; i++)
-        mat.mat.data[i] = i;
+        obj.mat.data[i] = i;
+    obj.width_ = 150;
+    obj.height_ = 100;
 
-    json j = structmapper::convert_to_json(mat);
+    json j = structmapper::convert_to_json(obj);
     json expected = {
         {"mat", 
             json::array({
@@ -385,9 +395,17 @@ TEST(StructToJson, WithExternalRawArray) {
                 {6.0, 7.0, 8.0},
             })
         },
+        {"resolution", {150, 100}},
     };
 
     EXPECT_EQ(j, expected);
+
+    WithExpr obj2 = structmapper::convert_from_json<WithExpr>(j);
+
+    for (int i = 0; i < 9; i++)
+        EXPECT_EQ(obj2.mat.data[i], i);
+    EXPECT_EQ(obj2.width_, 150);
+    EXPECT_EQ(obj2.height_, 100);
 }
 
 TEST(StructFromJson, AllFieldsPresentAndMatchingTypeAreAllLoaded) {

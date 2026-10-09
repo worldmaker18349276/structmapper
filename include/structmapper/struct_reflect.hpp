@@ -23,23 +23,25 @@
 // for third-party structs you can't modify:
 //
 //   struct ThirdPartyCamera {
+//   private:
 //       double fov_ = 60.0;
-//       shared_ptr<double> aspect_ = 1.777;
-//       cv::Size resolution_ = cv::Size(1920, 1080);
-// 
+//   public:
 //       double& fov() { return fov_; }
 //       const double& fov() const { return fov_; }
-// 
-//       std::array<int, 2> get_resolution() const { return {resolution_.width, resolution_.height}; }
-//       void set_resolution(const std::array<int, 2>& v) { resolution_.width = v[0]; resolution_.height = v[1]; }
-//       FieldProxy<std::array<int, 2>> resolution() const { return FieldProxy(get_resolution()); }
-//       FieldProxy<std::array<int, 2>> resolution() { return FieldProxy(get_resolution(), [this](const std::array<int, 2>& v){ set_resolution(v); }); }
+//       shared_ptr<double> aspect = make_shared<double>(1.777);
+//       int width = 1920;
+//       int height = 1080;
 //   };
+// 
+//   std::array<int, 2> get_resolution(const ThirdPartyCamera& camera) const { return {camera.width, camera.height}; }
+//   void set_resolution(ThirdPartyCamera& camera, const std::array<int, 2>& v) { camera.width = v[0]; camera.height = v[1]; }
+//   auto resolution_proxy(const ThirdPartyCamera& camera) const { return proxy(get_resolution(camera)); }
+//   auto resolution_proxy(ThirdPartyCamera& camera) { return proxy(get_resolution(camera), [this](const auto& v){ set_resolution(camera, v); }); }
 //
 //   BEGIN_EXTERNAL_STRUCT(ThirdPartyCamera, "camera parameters")
-//       FIELD_EXPR_NAMED(double, &self.fov(),       "fov",    "field of view, degrees")
-//       FIELD_EXPR_NAMED(double, self.aspect_,      "aspect", "aspect ratio")             // shared_ptr<double> member
-//       FIELD_EXPR_NAMED(double, self.resolution(), "resolution", "resolution of image")  // custom proxy
+//       FIELD_EXPR_NAMED(&self.fov(),            "fov",    "field of view, degrees")   // custom member reference
+//       FIELD_EXPR_NAMED(self.aspect,            "aspect", "aspect ratio")             // shared_ptr<double> member
+//       FIELD_EXPR_NAMED(resolution_proxy(self), "resolution", "resolution of image")  // custom proxy
 //   END_EXTERNAL_STRUCT()
 //
 // EXPR is evaluated per call and its result is returned BY VALUE. It must be a
@@ -392,18 +394,21 @@ namespace structmapper {
     // A proxy that defers writing a value back until its lifetime ends.
     //
     // Stores a local copy of the value and optionally invokes a setter with the
-    // modified value when the proxy is destroyed. If no setter is provided, the
-    // value is discarded when the proxy is destroyed.
+    // modified value when the proxy is destroyed. If no setter is provided or
+    // never access non-const reference, the value is discarded when the proxy
+    // is destroyed.
     //
     // The proxy is movable but not copyable to ensure that the setter is invoked
     // at most once.
-    template <typename T>
+    template <typename T, typename Setter = std::nullptr_t>
     class FieldProxy {
     public:
-        using Setter = std::function<void(const T&)>;
+        explicit FieldProxy(T value)
+            : value_(std::move(value)) {}
 
-        FieldProxy(T value, Setter setter = {})
-            : value_(std::move(value)), setter_(std::move(setter)) {}
+        FieldProxy(T value, Setter setter)
+            : value_(std::move(value)),
+            setter_(std::move(setter)) {}
 
         FieldProxy(const FieldProxy&) = delete;
         FieldProxy& operator=(const FieldProxy&) = delete;
@@ -411,23 +416,59 @@ namespace structmapper {
         FieldProxy(FieldProxy&& other)
             : value_(std::move(other.value_)),
             setter_(std::move(other.setter_)),
+            dirty_(other.dirty_),
             active_(other.active_) {
             other.active_ = false;
         }
 
         ~FieldProxy() {
-            if (active_ && setter_)
-                setter_(value_);
+            writeback(std::integral_constant<
+                bool, !std::is_same<Setter, std::nullptr_t>::value>{});
         }
 
-        T& operator*() { return value_; }
-        const T& operator*() const { return value_; }
+        // only available for proxy with setter
+        template <typename S = Setter,
+                typename std::enable_if<
+                    !std::is_same<S, std::nullptr_t>::value,
+                    int>::type = 0>
+        T& operator*() {
+            dirty_ = true;
+            return value_;
+        }
+
+        const T& operator*() const {
+            return value_;
+        }
 
     private:
+        void writeback(std::true_type) noexcept {
+            if (active_ && dirty_) {
+                try {
+                    setter_(value_);
+                } catch (...) {}
+            }
+        }
+
+        void writeback(std::false_type) noexcept {}
+
         T value_;
-        Setter setter_;
+        Setter setter_{};
+        bool dirty_ = false;
         bool active_ = true;
     };
+
+    template <typename T>
+    FieldProxy<T> proxy(T value) {
+        return FieldProxy<T>(std::move(value));
+    }
+
+    template <typename T, typename Setter>
+    FieldProxy<T, typename std::decay<Setter>::type>
+    proxy(T value, Setter&& setter) {
+        using SetterType = typename std::decay<Setter>::type;
+        return FieldProxy<T, SetterType>(
+            std::move(value), std::forward<Setter>(setter));
+    }
 
 } // namespace structmapper
 
