@@ -6,6 +6,7 @@
 //   public:
 //       double fov = 60.0;
 //       double aspect = 1.777;
+//       std::array<int, 2> resolution = {1920, 1080};
 //
 //       using Kind = strenum::StringEnum<CTSTR("pinhole"), CTSTR("ortho")>;
 //       Kind kind = "pinhole";
@@ -13,10 +14,11 @@
 //       CTSTR("/cam/image_raw") topic{};   // fixed, compile-time constant string
 //
 //       BEGIN_STRUCT("camera parameters")
-//           FIELD(fov,    "field of view, degrees")
-//           FIELD(aspect, "aspect ratio")
-//           FIELD(kind,   "camera projection kind")
-//           FIELD(topic,  "output topic")
+//           FIELD(fov,        "field of view, degrees")
+//           FIELD(aspect,     "aspect ratio")
+//           FIELD(resolution, "resolution of image")
+//           FIELD(kind,       "camera projection kind")
+//           FIELD(topic,      "output topic")
 //       END_STRUCT()
 //   };
 //
@@ -31,17 +33,28 @@
 //       shared_ptr<double> aspect = make_shared<double>(1.777);
 //       int width = 1920;
 //       int height = 1080;
+//       enum class Kind { Pinhole, Ortho };
+//       Kind kind = Kind::Pinhole;
+//       static constexpr const char* topic = "/cam/image_raw";
 //   };
 // 
 //   std::array<int, 2> get_resolution(const ThirdPartyCamera& camera) const { return {camera.width, camera.height}; }
 //   void set_resolution(ThirdPartyCamera& camera, const std::array<int, 2>& v) { camera.width = v[0]; camera.height = v[1]; }
 //   auto resolution_proxy(const ThirdPartyCamera& camera) const { return proxy(get_resolution(camera)); }
 //   auto resolution_proxy(ThirdPartyCamera& camera) { return proxy(get_resolution(camera), [this](const auto& v){ set_resolution(camera, v); }); }
+//   template<typename Self>
+//   auto kind_proxy(Self& self) {
+//       return enum_proxy<std::string>(&self.kind, {
+//           {Kind::Pinhole, "pinhole"},
+//           {Kind::Ortho, "ortho"},
+//       });
+//   }
 //
 //   BEGIN_EXTERNAL_STRUCT(ThirdPartyCamera, "camera parameters")
 //       FIELD_EXPR_NAMED(&self.fov(),            "fov",    "field of view, degrees")   // custom member reference
 //       FIELD_EXPR_NAMED(self.aspect,            "aspect", "aspect ratio")             // shared_ptr<double> member
 //       FIELD_EXPR_NAMED(resolution_proxy(self), "resolution", "resolution of image")  // custom proxy
+//       FIELD_EXPR_NAMED(kind_proxy(self),       "kind", "camera projection kind")     // enum <-> string
 //   END_EXTERNAL_STRUCT()
 //
 // EXPR is evaluated per call and its result is returned BY VALUE. It must be a
@@ -468,6 +481,67 @@ namespace structmapper {
         using SetterType = typename std::decay<Setter>::type;
         return FieldProxy<T, SetterType>(
             std::move(value), std::forward<Setter>(setter));
+    }
+
+    namespace detail {
+
+        template <typename Ptr, typename Enum, typename Value>
+        auto enum_proxy_impl(
+            Ptr&&,
+            Value value,
+            const std::map<Enum, Value>&,
+            std::false_type)
+        {
+            return proxy(value);
+        }
+
+        template <typename Ptr, typename Enum, typename Value>
+        auto enum_proxy_impl(
+            Ptr&& ptr,
+            Value value,
+            const std::map<Enum, Value>& enum_to_value,
+            std::true_type)
+        {
+            return proxy(
+                value,
+                [ptr = std::forward<Ptr>(ptr), enum_to_value = std::map<Enum, Value>(enum_to_value)](const Value& value) mutable {
+                    for (const auto& item : enum_to_value)
+                        if (item.second == value) {
+                            *ptr = item.first;
+                            return;
+                        }
+                    throw std::invalid_argument("Unknown enum mapping value");
+                });
+        }
+
+    } // namespace detail
+
+    template <typename Value, typename Ptr>
+    auto enum_proxy(
+        Ptr&& ptr,
+        const std::map<
+            typename std::decay<decltype(*ptr)>::type,
+            Value>& enum_to_value)
+    {
+        using Enum = typename std::decay<decltype(*ptr)>::type;
+
+        auto it = enum_to_value.find(*ptr);
+        if (it == enum_to_value.end())
+            throw std::invalid_argument("Unknown enum value");
+        auto value = it->second;
+
+        using IsMutable = std::integral_constant<
+            bool,
+            !std::is_const<
+                typename std::remove_reference<decltype(*ptr)>::type
+            >::value>;
+
+        return detail::enum_proxy_impl(
+            std::forward<Ptr>(ptr),
+            value,
+            enum_to_value,
+            IsMutable{}
+        );
     }
 
 } // namespace structmapper

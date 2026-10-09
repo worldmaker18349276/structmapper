@@ -119,15 +119,26 @@ struct WithExpr {
     EMatrix3x3 mat;
     int width_ = 1920;
     int height_ = 1080;
+    enum class Kind { Pinhole, Ortho };
+    Kind kind = Kind::Pinhole;
+    static constexpr const char* topic = "/cam/image_raw";
 
     std::array<int, 2> get_resolution() const { return {width_, height_}; }
     void set_resolution(const std::array<int, 2>& v) { width_ = v[0]; height_ = v[1]; }
     auto resolution_proxy() const { return structmapper::proxy(get_resolution()); }
     auto resolution_proxy() { return structmapper::proxy(get_resolution(), [this](const auto& v){ set_resolution(v); }); }
+    template<typename Self>
+    static auto kind_proxy(Self& self) {
+        return structmapper::enum_proxy<Camera::Kind>(&self.kind, {
+            {Kind::Pinhole, "pinhole"},
+            {Kind::Ortho, "ortho"},
+        });
+    }
 
     BEGIN_STRUCT("with complex fields requiring expr accessor")
         FIELD_EMatrix3x3(mat, "matrix 3x3")
         FIELD_EXPR_NAMED(self.resolution_proxy(), "resolution", "resolution")
+        FIELD_EXPR_NAMED(WithExpr::kind_proxy(self), "kind", "kind")
     END_STRUCT()
 };
 
@@ -385,9 +396,11 @@ TEST(StructToJson, WithFieldExpr) {
         obj.mat.data[i] = i;
     obj.width_ = 150;
     obj.height_ = 100;
+    obj.kind = WithExpr::Kind::Ortho;
 
     json j = structmapper::convert_to_json(obj);
     json expected = {
+        {"kind", "ortho"},
         {"mat", 
             json::array({
                 {0.0, 1.0, 2.0},
@@ -406,6 +419,7 @@ TEST(StructToJson, WithFieldExpr) {
         EXPECT_EQ(obj2.mat.data[i], i);
     EXPECT_EQ(obj2.width_, 150);
     EXPECT_EQ(obj2.height_, 100);
+    EXPECT_EQ(obj2.kind, WithExpr::Kind::Ortho);
 }
 
 TEST(StructFromJson, AllFieldsPresentAndMatchingTypeAreAllLoaded) {
