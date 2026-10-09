@@ -66,9 +66,9 @@ struct Vector {
 };
 
 BEGIN_EXTERNAL_STRUCT(Vector, "vector")
-    FIELD_EXPR_NAMED(double, &self.x(), "x", "x coordinate")
-    FIELD_EXPR_NAMED(double, &self.y(), "y", "y coordinate")
-    FIELD_EXPR_NAMED(double, &self.z(), "z", "z coordinate")
+    FIELD_EXPR_NAMED(&self.x(), "x", "x coordinate")
+    FIELD_EXPR_NAMED(&self.y(), "y", "y coordinate")
+    FIELD_EXPR_NAMED(&self.z(), "z", "z coordinate")
 END_EXTERNAL_STRUCT()
 
 struct Quaternion {
@@ -85,10 +85,10 @@ struct Quaternion {
 };
 
 BEGIN_EXTERNAL_STRUCT(Quaternion, "quaternion")
-    FIELD_EXPR_NAMED(double, &self.x(), "x", "x coordinate")
-    FIELD_EXPR_NAMED(double, &self.y(), "y", "y coordinate")
-    FIELD_EXPR_NAMED(double, &self.z(), "z", "z coordinate")
-    FIELD_EXPR_NAMED(double, &self.w(), "w", "w coordinate")
+    FIELD_EXPR_NAMED(&self.x(), "x", "x coordinate")
+    FIELD_EXPR_NAMED(&self.y(), "y", "y coordinate")
+    FIELD_EXPR_NAMED(&self.z(), "z", "z coordinate")
+    FIELD_EXPR_NAMED(&self.w(), "w", "w coordinate")
 END_EXTERNAL_STRUCT()
 
 struct Pose {
@@ -113,7 +113,7 @@ struct EMatrix3x3 {
     double data[9];
 };
 
-#define FIELD_EMatrix3x3(VAR, DESC) FIELD_EXPR_NAMED(double[3][3], &::structmapper::view_as<double[3][3]>(self.VAR.data), #VAR, DESC)
+#define FIELD_EMatrix3x3(VAR, DESC) FIELD_EXPR_NAMED(&::structmapper::view_as<double[3][3]>(self.VAR.data), #VAR, DESC)
 
 struct WithExternalMatrix3x3 {
     EMatrix3x3 mat;

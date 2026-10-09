@@ -486,20 +486,24 @@ namespace structmapper {                                                      \
             static const auto fields_ = std::tuple_cat(                       \
                 std::tuple<>{}
 
-#define FIELD_EXPR_NAMED(TYPE, EXPR, NAME, DESC) \
-    , std::make_tuple([]() { \
-        using FieldType = TYPE; \
-        auto accessor = [](auto&& self) { return (EXPR); }; \
-        using P  = decltype(accessor(std::declval<ReflectSelf&>())); \
-        using CP = decltype(accessor(std::declval<const ReflectSelf&>())); \
-        static_assert(::structmapper::is_json_convertible<FieldType>::value, \
-                      "structmapper: type of field expression " #EXPR " is not JSON-convertible"); \
-        static_assert(std::is_convertible<decltype(*std::declval<P&>()), FieldType&>::value, \
-                      "structmapper: " #EXPR " must yield a pointer-like object whose operator* gives " #TYPE "&"); \
-        static_assert(std::is_convertible<decltype(*std::declval<CP&>()), const FieldType&>::value, \
-                      "structmapper: " #EXPR " (const self) must yield a pointer-like object whose operator* gives const " #TYPE "&"); \
-        return ::structmapper::ExprFieldInfo<ReflectSelf, FieldType, P, CP>{NAME, DESC, accessor, accessor}; \
-    }())
+#define FIELD_EXPR_NAMED(EXPR, NAME, DESC) \
+                , std::make_tuple([]() { \
+                    auto accessor = [](auto&& self) { return (EXPR); }; \
+                    using P  = decltype(accessor(std::declval<ReflectSelf&>())); \
+                    using CP = decltype(accessor(std::declval<const ReflectSelf&>())); \
+                    using FieldType = ::structmapper::field_type_t<decltype(*std::declval<P&>())>; \
+                    static_assert( \
+                        ::structmapper::is_json_convertible<FieldType>::value, \
+                        "structmapper: type of field expression " #EXPR " is not JSON-convertible" \
+                    ); \
+                    static_assert( \
+                        std::is_convertible<decltype(*std::declval<CP&>()), const FieldType&>::value, \
+                        "structmapper: external field expression " #EXPR " (const self) must yield a pointer-like object whose operator* gives const field type&" \
+                    ); \
+                    return ::structmapper::ExprFieldInfo<ReflectSelf, FieldType, P, CP>{ \
+                        NAME, DESC, accessor, accessor \
+                    }; \
+                }())
 
 #define END_EXTERNAL_STRUCT()                                                 \
             );                                                                \
