@@ -25,12 +25,15 @@
 //   struct ThirdPartyCamera {
 //       double fov_ = 60.0;
 //       shared_ptr<double> aspect_ = 1.777;
-//       std::array<int, 2> resolution_ = {1920, 1080};
+//       cv::Size resolution_ = cv::Size(1920, 1080);
 // 
 //       double& fov() { return fov_; }
 //       const double& fov() const { return fov_; }
-//       FieldProxy<int> resolution() { ... }
-//       FieldProxy<const int> resolution() const { ... }
+// 
+//       std::array<int, 2> get_resolution() const { return {resolution_.width, resolution_.height}; }
+//       void set_resolution(const std::array<int, 2>& v) { resolution_.width = v[0]; resolution_.height = v[1]; }
+//       FieldProxy<std::array<int, 2>> resolution() const { return FieldProxy(get_resolution()); }
+//       FieldProxy<std::array<int, 2>> resolution() { return FieldProxy(get_resolution(), [this](const std::array<int, 2>& v){ set_resolution(v); }); }
 //   };
 //
 //   BEGIN_EXTERNAL_STRUCT(ThirdPartyCamera, "camera parameters")
@@ -384,6 +387,47 @@ namespace structmapper {
         using Ptr = typename std::conditional<std::is_const<From>::value, const To, To>::type*;
         return *reinterpret_cast<Ptr>(&from);
     }
+
+
+    // A proxy that defers writing a value back until its lifetime ends.
+    //
+    // Stores a local copy of the value and optionally invokes a setter with the
+    // modified value when the proxy is destroyed. If no setter is provided, the
+    // value is discarded when the proxy is destroyed.
+    //
+    // The proxy is movable but not copyable to ensure that the setter is invoked
+    // at most once.
+    template <typename T>
+    class FieldProxy {
+    public:
+        using Setter = std::function<void(const T&)>;
+
+        FieldProxy(T value, Setter setter = {})
+            : value_(std::move(value)), setter_(std::move(setter)) {}
+
+        FieldProxy(const FieldProxy&) = delete;
+        FieldProxy& operator=(const FieldProxy&) = delete;
+
+        FieldProxy(FieldProxy&& other)
+            : value_(std::move(other.value_)),
+            setter_(std::move(other.setter_)),
+            active_(other.active_) {
+            other.active_ = false;
+        }
+
+        ~FieldProxy() {
+            if (active_ && setter_)
+                setter_(value_);
+        }
+
+        T& operator*() { return value_; }
+        const T& operator*() const { return value_; }
+
+    private:
+        T value_;
+        Setter setter_;
+        bool active_ = true;
+    };
 
 } // namespace structmapper
 
