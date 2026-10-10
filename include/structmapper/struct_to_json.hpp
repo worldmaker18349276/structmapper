@@ -48,7 +48,7 @@ namespace structmapper {
     // Logging
     // ---------------------------------------------------------------------
     struct FromJsonLog {
-        using LogLevel = int; // INFO = 0, WARNING = 1
+        enum class LogLevel { INFO = 0, WARNING = 1, ERROR = 2 };
         virtual LogLevel level() const = 0;
         virtual std::string msg() const = 0;
     };
@@ -56,7 +56,7 @@ namespace structmapper {
         std::string path;
         json value;
         FromJsonLoadLog(std::string path, json value) : path(path), value(value) {}
-        virtual LogLevel level() const override { return 0; }
+        virtual LogLevel level() const override { return LogLevel::INFO; }
         virtual std::string msg() const override {
             return "loaded " + path + " = " + value.dump();
         }
@@ -67,7 +67,7 @@ namespace structmapper {
         const char* got;
         FromJsonMismatchLog(std::string path, const char* expected, const char* got)
             : path(path), expected(expected), got(got) {}
-        virtual LogLevel level() const override { return 1; }
+        virtual LogLevel level() const override { return LogLevel::ERROR; }
         virtual std::string msg() const override {
             std::ostringstream msg;
             return "type mismatch at " + path + ": expected " + expected + ", got " + got;
@@ -76,7 +76,7 @@ namespace structmapper {
     struct FromJsonMissingLog : public FromJsonLog {
         std::string path;
         FromJsonMissingLog(std::string path) : path(path) {}
-        virtual LogLevel level() const override { return 1; }
+        virtual LogLevel level() const override { return LogLevel::WARNING; }
         virtual std::string msg() const override {
             return "missing field " + path;
         }
@@ -84,7 +84,7 @@ namespace structmapper {
     struct FromJsonUnknownLog : public FromJsonLog {
         std::string path;
         FromJsonUnknownLog(std::string path) : path(path) {}
-        virtual LogLevel level() const override { return 1; }
+        virtual LogLevel level() const override { return LogLevel::WARNING; }
         virtual std::string msg() const override {
             return "unknown field " + path;
         }
@@ -101,8 +101,17 @@ namespace structmapper {
         FromJsonLogger logger(bool print = true) {
             return [this, print](const FromJsonLog& log) {
                 if (print) {
-                    if (log.level() == 1) std::cerr << "[structmapper] WARNING: " << log.msg() << "\n";
-                    else                  std::cout << "[structmapper] " << log.msg() << "\n";
+                    switch (log.level()) {
+                    case FromJsonLog::LogLevel::INFO:
+                        std::cerr << "[structmapper]    INFO: " << log.msg() << "\n";
+                        break;
+                    case FromJsonLog::LogLevel::WARNING:
+                        std::cerr << "[structmapper] WARNING: " << log.msg() << "\n";
+                        break;
+                    case FromJsonLog::LogLevel::ERROR:
+                        std::cerr << "[structmapper]   ERROR: " << log.msg() << "\n";
+                        break;
+                    }
                 }
 
                 if (dynamic_cast<const FromJsonLoadLog*>(&log))
@@ -445,14 +454,16 @@ namespace structmapper {
     bool from_json(T& obj, const json& j, const std::string& path, FromJsonLogger logger = {}) {
         FromJsonStats local_stats;
         if (!logger) logger = local_stats.logger();
-        return detail::from_json(obj, j, path, logger);
+        detail::from_json(obj, j, path, logger);
+        return local_stats.ok();
     }
 
     template <typename T>
     bool from_json(T& obj, const json& j, FromJsonLogger logger = {}) {
         FromJsonStats local_stats;
         if (!logger) logger = local_stats.logger();
-        return detail::from_json(obj, j, "$", logger);
+        detail::from_json(obj, j, "$", logger);
+        return local_stats.ok();
     }
 
     template <typename T>

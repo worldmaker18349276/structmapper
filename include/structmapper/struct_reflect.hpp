@@ -79,9 +79,33 @@
 #include <vector>
 #include <array>
 #include <map>
+#include <exception>
+#include <stdexcept>
 #include <cassert>
 #include <nlohmann/json.hpp>
 #include "structmapper/strenum.hpp"
+
+// polyfill for uncaught_exceptions
+#if !defined(__cpp_lib_uncaught_exceptions) && !defined(_MSC_VER)
+#include <cxxabi.h>
+#endif
+
+#if defined(_MSC_VER) && !defined(__cpp_lib_uncaught_exceptions)
+extern "C" int __cdecl __uncaught_exceptions();
+#endif
+
+inline int uncaught_count() noexcept {
+#if defined(__cpp_lib_uncaught_exceptions)
+    return std::uncaught_exceptions();
+#elif defined(_MSC_VER)
+    return __uncaught_exceptions();
+#else
+    // Itanium C++ ABI (libstdc++, libc++abi): layout is {caught*, unsigned uncaught}
+    struct eh_globals { void* caught; unsigned int uncaught; };
+    return static_cast<int>(
+        reinterpret_cast<const eh_globals*>(abi::__cxa_get_globals())->uncaught);
+#endif
+}
 
 namespace structmapper {
 
@@ -433,8 +457,8 @@ namespace structmapper {
             active_(other.active_) {
             other.active_ = false;
         }
-
-        ~FieldProxy() {
+        
+        ~FieldProxy() noexcept(false) {
             writeback(std::integral_constant<
                 bool, !std::is_same<Setter, std::nullptr_t>::value>{});
         }
@@ -454,20 +478,20 @@ namespace structmapper {
         }
 
     private:
-        void writeback(std::true_type) noexcept {
-            if (active_ && dirty_) {
-                try {
-                    setter_(value_);
-                } catch (...) {}
+        void writeback(std::true_type) {
+            if (active_ && dirty_ && uncaught_ == uncaught_count()) {
+                active_ = false;
+                setter_(value_);
             }
         }
 
-        void writeback(std::false_type) noexcept {}
+        void writeback(std::false_type) {}
 
         T value_;
         Setter setter_{};
         bool dirty_ = false;
         bool active_ = true;
+        int uncaught_ = uncaught_count();
     };
 
     template <typename T>

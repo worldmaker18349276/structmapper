@@ -424,6 +424,7 @@ namespace structmapper {
         nlohmann::json root = detail::type_schema<T>(ctx);
         if (!defs.empty()) {
             root["$defs"] = std::move(defs);
+            root["$schema"] = "https://json-schema.org/draft/2020-12/schema";
         }
         return root;
     }

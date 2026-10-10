@@ -104,7 +104,7 @@ namespace strenum {
 
     public:
         constexpr StringEnum() : value_(values[0]) {
-            static_assert(values.size() > 0);
+            static_assert(values.size() > 0, "StringEnum: empty enum is not constructable");
         }
         constexpr StringEnum(const char* s) : value_(find(s)) {
             if (!value_)

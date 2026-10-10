@@ -643,6 +643,68 @@ TEST(FromJsonStats, SummaryIsNonEmptyAndOkReflectsOnlyTypeMismatches) {
     EXPECT_FALSE(stats.ok());
 }
 
+struct SetterThrowStruct {
+    int a = 0;
+    int b_ = 0;
+    int c = 0;
+
+    void set_b(const int& v) { b_ = v; throw std::invalid_argument("b"); }
+    auto b_proxy() const { return structmapper::proxy(b_); }
+    auto b_proxy() { return structmapper::proxy(b_, [this](const auto& v){ set_b(v); }); }
+
+    BEGIN_STRUCT("a struct where b throw exception on set")
+        FIELD(a,   "a")
+        FIELD_EXPR_NAMED(self.b_proxy(), "b", "b")
+        FIELD(c, "c")
+    END_STRUCT()
+};
+
+
+TEST(FromJsonStats, SetterThrow) {
+    json j = {
+        {"a", 1},
+        {"b", 2},
+        {"c", 3},
+    };
+    SetterThrowStruct data{};
+    EXPECT_THROW(
+        structmapper::from_json<SetterThrowStruct>(data, j),
+        std::invalid_argument
+    );
+    EXPECT_EQ(data.a, 1);
+    EXPECT_EQ(data.b_, 2);
+    EXPECT_EQ(data.c, 0);
+};
+
+TEST(FromJsonStats, SetterNestedThrow) {
+    struct NestedThrow {
+        bool* thrown;
+        SetterThrowStruct* data;
+        ~NestedThrow() {
+            try {
+                json j = {
+                    {"a", 1},
+                    {"b", 2},
+                    {"c", 3},
+                };
+                structmapper::from_json<SetterThrowStruct>(*data, j);
+            } catch (...) {
+                *thrown = true;
+            }
+        }
+    };
+    SetterThrowStruct data{};
+    bool thrown_inside_dtor = false;
+    try {
+        NestedThrow n{&thrown_inside_dtor, &data};
+        throw std::invalid_argument("outer");
+    } catch (...) {}
+    EXPECT_TRUE(thrown_inside_dtor);
+    EXPECT_EQ(data.a, 1);
+    EXPECT_EQ(data.b_, 2);
+    EXPECT_EQ(data.c, 0);
+}
+
 // =======================================================================
 // structmapper::to_schema<T>()
 // =======================================================================

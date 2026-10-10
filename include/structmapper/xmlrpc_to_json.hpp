@@ -62,14 +62,14 @@ namespace structmapper {
     // Logging
     // ---------------------------------------------------------------------
     struct XmlRpcToJsonLog {
-        using LogLevel = int; // INFO = 0, WARNING = 1
+        enum class LogLevel { INFO = 0, WARNING = 1, ERROR = 2 };
         virtual LogLevel level() const = 0;
         virtual std::string msg() const = 0;
     };
     struct XmlRpcToJsonInvalidValueLog : public XmlRpcToJsonLog {
         std::string path;
         XmlRpcToJsonInvalidValueLog(std::string path) : path(path) {}
-        virtual LogLevel level() const override { return 0; }
+        virtual LogLevel level() const override { return LogLevel::INFO; }
         virtual std::string msg() const override {
             return "unset/invalid value at " + path + " replaced with null";
         }
@@ -77,7 +77,7 @@ namespace structmapper {
     struct XmlRpcToJsonDatetimeValueLog : public XmlRpcToJsonLog {
         std::string path;
         XmlRpcToJsonDatetimeValueLog(std::string path) : path(path) {}
-        virtual LogLevel level() const override { return 1; }
+        virtual LogLevel level() const override { return LogLevel::ERROR; }
         virtual std::string msg() const override {
             return "datetime value at " + path + " replaced with string";
         }
@@ -85,7 +85,7 @@ namespace structmapper {
     struct XmlRpcToJsonBinaryValueLog : public XmlRpcToJsonLog {
         std::string path;
         XmlRpcToJsonBinaryValueLog(std::string path) : path(path) {}
-        virtual LogLevel level() const override { return 1; }
+        virtual LogLevel level() const override { return LogLevel::ERROR; }
         virtual std::string msg() const override {
             return "binary value at " + path + " replaced with placeholder";
         }
@@ -101,8 +101,17 @@ namespace structmapper {
         XmlRpcToJsonLogger logger(bool print = true) {
             return [this, print](const XmlRpcToJsonLog& log) {
                 if (print) {
-                    if (log.level() == 1) std::cerr << "[structmapper] WARNING: " << log.msg() << "\n";
-                    else                  std::cout << "[structmapper] " << log.msg() << "\n";
+                    switch (log.level()) {
+                    case XmlRpcToJsonLog::LogLevel::INFO:
+                        std::cerr << "[structmapper]    INFO: " << log.msg() << "\n";
+                        break;
+                    case XmlRpcToJsonLog::LogLevel::WARNING:
+                        std::cerr << "[structmapper] WARNING: " << log.msg() << "\n";
+                        break;
+                    case XmlRpcToJsonLog::LogLevel::ERROR:
+                        std::cerr << "[structmapper]   ERROR: " << log.msg() << "\n";
+                        break;
+                    }
                 }
 
                 if (dynamic_cast<const XmlRpcToJsonInvalidValueLog*>(&log))
@@ -124,14 +133,14 @@ namespace structmapper {
 
 
     struct JsonToXmlRpcLog {
-        using LogLevel = int; // INFO = 0, WARNING = 1
+        enum class LogLevel { INFO = 0, WARNING = 1, ERROR = 2 };
         virtual LogLevel level() const = 0;
         virtual std::string msg() const = 0;
     };
     struct JsonToXmlRpcNullValueLog : public JsonToXmlRpcLog {
         std::string path;
         JsonToXmlRpcNullValueLog(std::string path) : path(path) {}
-        virtual LogLevel level() const override { return 0; }
+        virtual LogLevel level() const override { return LogLevel::INFO; }
         virtual std::string msg() const override {
             return "null at " + path + " encoded as an unset value";
         }
@@ -140,7 +149,7 @@ namespace structmapper {
         std::string path;
         long long value;
         JsonToXmlRpcOversizedIntegerLog(std::string path, long long value) : path(path), value(value) {}
-        virtual LogLevel level() const override { return 1; }
+        virtual LogLevel level() const override { return LogLevel::ERROR; }
         virtual std::string msg() const override {
             return "integer at " + path + " (" + std::to_string(value) + ") doesn't fit XML-RPC's 32-bit int; encoded as a double instead";
         }
@@ -155,8 +164,17 @@ namespace structmapper {
         JsonToXmlRpcLogger logger(bool print = true) {
             return [this, print](const JsonToXmlRpcLog& log) {
                 if (print) {
-                    if (log.level() == 1) std::cerr << "[structmapper] WARNING: " << log.msg() << "\n";
-                    else                  std::cout << "[structmapper] " << log.msg() << "\n";
+                    switch (log.level()) {
+                    case JsonToXmlRpcLog::LogLevel::INFO:
+                        std::cerr << "[structmapper]    INFO: " << log.msg() << "\n";
+                        break;
+                    case JsonToXmlRpcLog::LogLevel::WARNING:
+                        std::cerr << "[structmapper] WARNING: " << log.msg() << "\n";
+                        break;
+                    case JsonToXmlRpcLog::LogLevel::ERROR:
+                        std::cerr << "[structmapper]   ERROR: " << log.msg() << "\n";
+                        break;
+                    }
                 }
 
                 if (dynamic_cast<const JsonToXmlRpcNullValueLog*>(&log))
