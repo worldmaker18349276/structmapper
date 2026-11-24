@@ -201,7 +201,7 @@ namespace structmapper {
             return std::string(buf);
         }
 
-        void xmlrpc_to_json(XmlRpc::XmlRpcValue& v, json& j, const std::string& path, XmlRpcToJsonLogger& logger) {
+        inline void xmlrpc_to_json(XmlRpc::XmlRpcValue& v, json& j, const std::string& path, XmlRpcToJsonLogger& logger) {
             using Type = XmlRpc::XmlRpcValue::Type;
             switch (v.getType()) {
                 case Type::TypeInvalid: {
@@ -270,7 +270,7 @@ namespace structmapper {
             return XmlRpc::XmlRpcValue(j.get<double>());
         }
 
-        void json_to_xmlrpc(const json& j, XmlRpc::XmlRpcValue& v, const std::string& path, JsonToXmlRpcLogger& logger) {
+        inline void json_to_xmlrpc(const json& j, XmlRpc::XmlRpcValue& v, const std::string& path, JsonToXmlRpcLogger& logger) {
             if (j.is_null()) {
                 logger(JsonToXmlRpcNullValueLog(path));
                 v = XmlRpc::XmlRpcValue();
