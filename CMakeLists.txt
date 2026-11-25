@@ -23,6 +23,12 @@ include_directories(
   ${catkin_INCLUDE_DIRS}
 )
 
+# files needed by structmapper_generate_schemas()/structmapper_generate_python_schemas() (see cmake/structmapper-extras.cmake)
+install(DIRECTORY cmake/
+  DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/cmake
+  FILES_MATCHING PATTERN "*.in" PATTERN "*.py"
+)
+
 install(DIRECTORY include/${PROJECT_NAME}/
   DESTINATION ${CATKIN_PACKAGE_INCLUDE_DESTINATION}
   FILES_MATCHING PATTERN "*.hpp"
