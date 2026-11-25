@@ -10,6 +10,7 @@
 #include "structmapper/struct_reflect.hpp"
 #include "structmapper/struct_to_json.hpp"
 #include "structmapper/struct_to_schema.hpp"
+#include "structmapper/schema_generator.hpp"
 #include "structmapper/struct_equal.hpp"
 #include "structmapper/xmlrpc_to_json.hpp"
 
@@ -1517,6 +1518,23 @@ TEST(StructEqualRecursive, SiblingsOrderIndependent) {
     a.rec["p"]; a.rec["q"].rec["r"];
     b.rec["q"].rec["r"]; b.rec["p"];
     EXPECT_TRUE(structmapper::struct_equal(a, b));
+}
+
+// ---------------------------------------------------------------------
+// schema files: exponent floats are written in the form yaml 1.1 loaders read as float
+// ---------------------------------------------------------------------
+
+TEST(SchemaGenerator, YamlFloatExponents) {
+    json j = {{"small", 1e-9}, {"big", 1e20}, {"mantissa", 1.5e-7}, {"int", 12}, {"neg", -3}, {"plain", 0.25},
+              {"text", "1e-09 \"2e5\" \\ 3e4"}, {"list", json::array({-1e-12, 7, 2.5e+30})}};
+    std::string fixed = structmapper::detail::with_yaml_float_exponents(j.dump(2));
+    EXPECT_NE(fixed.find("\"small\": 1.0e-09"), std::string::npos);
+    EXPECT_NE(fixed.find("\"big\": 1.0e+20"), std::string::npos);
+    EXPECT_NE(fixed.find("\"mantissa\": 1.5e-07"), std::string::npos);
+    EXPECT_NE(fixed.find("-1.0e-12"), std::string::npos);
+    EXPECT_NE(fixed.find("\"int\": 12"), std::string::npos);
+    EXPECT_NE(fixed.find("\"text\": \"1e-09 \\\"2e5\\\" \\\\ 3e4\""), std::string::npos);  // strings are untouched
+    EXPECT_EQ(json::parse(fixed), j);  // still the same json
 }
 
 int main(int argc, char** argv) {
