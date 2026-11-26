@@ -253,8 +253,8 @@ class FromJson:
         """
         return cast(DataclassT, from_json(cls, data))
     @classmethod
-    def to_schema(cls) -> JSON:
-        return to_schema(cls, {})
+    def to_schema(cls, parent_dir: Path = Path("/")) -> JSON:
+        return to_schema(cls, {}, parent_dir)
 
 def type_check(cls: Union[type, Any], obj: Any, *, path: str = "$", check_external: bool = False) -> bool:
     """
@@ -509,7 +509,7 @@ def _count_type(cls: Any, counts: Dict[type, int], refs: Dict[type, str]) -> Non
     # Any, scalars, Literals, External types, etc.
     return
 
-def _make_schema(cls: Any, defs_root: bool, refs: Dict[type, str]) -> Dict[str, JSON]:
+def _make_schema(cls: Any, defs_root: bool, refs: Dict[type, str], parent_dir: Path) -> Dict[str, JSON]:
     origin = get_origin(cls)
     args = get_args(cls)
 
@@ -526,7 +526,7 @@ def _make_schema(cls: Any, defs_root: bool, refs: Dict[type, str]) -> Dict[str, 
         hints = _get_type_hints(cls)
         properties: Dict[str, JSON] = {}
         for f in fields(cls):
-            field_schema = _make_schema(hints.get(f.name, f.type), False, refs)
+            field_schema = _make_schema(hints.get(f.name, f.type), False, refs, parent_dir)
             if f.default is not MISSING:
                 field_schema = cast(Dict[str, JSON], {**field_schema, "default": f.default})
             properties[f.name] = field_schema
@@ -542,6 +542,13 @@ def _make_schema(cls: Any, defs_root: bool, refs: Dict[type, str]) -> Dict[str, 
         schema_filepath = get_args(args[0])[0]
         literal_filepath = get_args(args[1])[0]
         path = Path(literal_filepath).parent / Path(schema_filepath)
+        if parent_dir == Path("/"):
+            path = path.absolute()
+        else:
+            try:
+                path = path.relative_to(parent_dir)
+            except ValueError:
+                path = path.absolute()
         return {"$ref": str(path)}
 
     if origin is Literal:
@@ -553,14 +560,14 @@ def _make_schema(cls: Any, defs_root: bool, refs: Dict[type, str]) -> Dict[str, 
     if origin in (list, List) or origin in (tuple, Tuple) and len(args) == 0 or origin in (tuple, Tuple) and len(args) == 2 and args[-1] is Ellipsis:
         schema = {
             "type": "array",
-            "items": _make_schema(args[0] if len(args) == 1 else Any, False, refs)
+            "items": _make_schema(args[0] if len(args) == 1 else Any, False, refs, parent_dir)
         }
         return schema
 
     if origin in (tuple, Tuple) and len(set(args)) == 1:
         schema = {
             "type": "array",
-            "items": _make_schema(args[0] if len(args) == 1 else Any, False, refs),
+            "items": _make_schema(args[0] if len(args) == 1 else Any, False, refs, parent_dir),
             "minItems": len(args),
             "maxItems": len(args),
         }
@@ -570,7 +577,7 @@ def _make_schema(cls: Any, defs_root: bool, refs: Dict[type, str]) -> Dict[str, 
         assert len(args) == 0 or len(args) == 2 and args[0] is str
         schema = {
             "type": "object",
-            "additionalProperties": _make_schema(args[1] if len(args) == 2 else Any, False, refs)
+            "additionalProperties": _make_schema(args[1] if len(args) == 2 else Any, False, refs, parent_dir)
         }
         return schema
 
@@ -595,7 +602,7 @@ def _choose_unique_defs_name(cls: type, defs_: Dict[str, type]) -> str:
         name = candidate
     return name
 
-def to_schema(cls: Union[type, Any], refs: Dict[type, str] = {}) -> Dict[str, JSON]:
+def to_schema(cls: Union[type, Any], refs: Dict[type, str] = {}, parent_dir: Path = Path("/")) -> Dict[str, JSON]:
     """
     convert type hints (valid for `from_json`) to JSON schema.
     
@@ -612,6 +619,7 @@ def to_schema(cls: Union[type, Any], refs: Dict[type, str] = {}) -> Dict[str, JS
     
     description of dataclass will be appended if exists.
 
+    parent_dir: where this schema is stored, for converting external $ref to relative path, use "/" for absolute path.
     """
     counts: Dict[type, int] = {}
     refs = dict(refs)
@@ -624,8 +632,8 @@ def to_schema(cls: Union[type, Any], refs: Dict[type, str] = {}) -> Dict[str, JS
             refs[typ] = f"#/$defs/{name}"
     defs: Dict[str, JSON] = {}
     for name, typ in defs_.items():
-        defs[name] = _make_schema(typ, True, refs)
-    root = _make_schema(cls, False, refs)
+        defs[name] = _make_schema(typ, True, refs, parent_dir)
+    root = _make_schema(cls, False, refs, parent_dir)
     if defs:
         root["$defs"] = defs
     return root
